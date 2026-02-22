@@ -1,8 +1,8 @@
 use ratatui::{
-    Frame,
     layout::{Alignment, Rect},
     style::{Color, Style},
     widgets::{Block, BorderType, Borders, Clear, Paragraph},
+    Frame,
 };
 
 use crossterm::event::KeyCode;
@@ -69,6 +69,7 @@ struct Viewport {
 #[derive(Clone, PartialEq)]
 enum BlockMode {
     Selected,
+    Moving,
     Editing { input: String, cursor: usize },
 }
 
@@ -565,11 +566,16 @@ fn render_hint(frame: &mut Frame, mode: &Mode) {
     let area = frame.area();
     let hint_area = Rect::new(0, area.height.saturating_sub(1), area.width, 1);
     let text = match mode {
-        Mode::Normal => "  hjkl: pan   q: quit",
+        Mode::Normal => "  [normal]  hjkl: pan   q: quit",
         Mode::SelectedBlock(_, BlockMode::Selected) => {
-            "  hjkl: pan   i: edit   esc: deselect   q: quit"
+            "  [selected]  hjkl: pan   m: move block   i: edit   esc: deselect   q: quit"
         }
-        Mode::SelectedBlock(_, BlockMode::Editing { .. }) => "  enter: confirm   esc: cancel",
+        Mode::SelectedBlock(_, BlockMode::Moving) => {
+            "  [move block]  hjkl: move ×1   HJKL: move ×10   esc: back   q: quit"
+        }
+        Mode::SelectedBlock(_, BlockMode::Editing { .. }) => {
+            "  [editing]  enter: confirm   esc: cancel"
+        }
     };
     let hint = Paragraph::new(text).style(Style::default().fg(Color::DarkGray));
     frame.render_widget(hint, hint_area);
@@ -631,11 +637,62 @@ fn handle_key(code: KeyCode, vp: &mut Viewport, mode: &mut Mode, nodes: &mut Vec
                 _ => {}
             }
         }
+        Mode::SelectedBlock(id, BlockMode::Moving) => {
+            let id = *id;
+            match code {
+                KeyCode::Char('h') => {
+                    if let Some(node) = nodes.iter_mut().find(|n| n.id == id) {
+                        node.x -= 1;
+                    }
+                }
+                KeyCode::Char('H') => {
+                    if let Some(node) = nodes.iter_mut().find(|n| n.id == id) {
+                        node.x -= 10;
+                    }
+                }
+                KeyCode::Char('l') => {
+                    if let Some(node) = nodes.iter_mut().find(|n| n.id == id) {
+                        node.x += 1;
+                    }
+                }
+                KeyCode::Char('L') => {
+                    if let Some(node) = nodes.iter_mut().find(|n| n.id == id) {
+                        node.x += 10;
+                    }
+                }
+                KeyCode::Char('k') => {
+                    if let Some(node) = nodes.iter_mut().find(|n| n.id == id) {
+                        node.y -= 1;
+                    }
+                }
+                KeyCode::Char('K') => {
+                    if let Some(node) = nodes.iter_mut().find(|n| n.id == id) {
+                        node.y -= 10;
+                    }
+                }
+                KeyCode::Char('j') => {
+                    if let Some(node) = nodes.iter_mut().find(|n| n.id == id) {
+                        node.y += 1;
+                    }
+                }
+                KeyCode::Char('J') => {
+                    if let Some(node) = nodes.iter_mut().find(|n| n.id == id) {
+                        node.y += 10;
+                    }
+                }
+                KeyCode::Esc => *mode = Mode::SelectedBlock(id, BlockMode::Selected),
+                _ => {}
+            }
+        }
         Mode::SelectedBlock(id, BlockMode::Selected) => match code {
             KeyCode::Char('h') => vp.x -= 3,
             KeyCode::Char('l') => vp.x += 3,
             KeyCode::Char('k') => vp.y += 3,
             KeyCode::Char('j') => vp.y -= 3,
+            KeyCode::Char('m') => {
+                let id = *id;
+                *mode = Mode::SelectedBlock(id, BlockMode::Moving);
+            }
             KeyCode::Char('i') => {
                 let id = *id;
                 let current = nodes
