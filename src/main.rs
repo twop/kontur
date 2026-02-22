@@ -1,8 +1,8 @@
 use ratatui::{
+    Frame,
     layout::{Alignment, Rect},
     style::{Color, Style},
     widgets::{Block, BorderType, Borders, Clear, Paragraph},
-    Frame,
 };
 
 use crossterm::event::KeyCode;
@@ -70,6 +70,7 @@ struct Viewport {
 enum BlockMode {
     Selected,
     Moving,
+    Resizing,
     Editing { input: String, cursor: usize },
 }
 
@@ -568,10 +569,13 @@ fn render_hint(frame: &mut Frame, mode: &Mode) {
     let text = match mode {
         Mode::Normal => "  [normal]  hjkl: pan   q: quit",
         Mode::SelectedBlock(_, BlockMode::Selected) => {
-            "  [selected]  hjkl: pan   m: move block   i: edit   esc: deselect   q: quit"
+            "  [selected]  hjkl: pan   m: move   r: resize   i: edit   esc: deselect   q: quit"
         }
         Mode::SelectedBlock(_, BlockMode::Moving) => {
-            "  [move block]  hjkl: move ×1   HJKL: move ×10   esc: back   q: quit"
+            "  [move block]  hjkl: move ×1   HJKL: move ×5 esc: back   q: quit"
+        }
+        Mode::SelectedBlock(_, BlockMode::Resizing) => {
+            "  [resize]  hjkl: expand in direction   HJKL: shrink from direction   esc: back   q: quit"
         }
         Mode::SelectedBlock(_, BlockMode::Editing { .. }) => {
             "  [editing]  enter: confirm   esc: cancel"
@@ -647,7 +651,7 @@ fn handle_key(code: KeyCode, vp: &mut Viewport, mode: &mut Mode, nodes: &mut Vec
                 }
                 KeyCode::Char('H') => {
                     if let Some(node) = nodes.iter_mut().find(|n| n.id == id) {
-                        node.x -= 10;
+                        node.x -= 5;
                     }
                 }
                 KeyCode::Char('l') => {
@@ -657,7 +661,7 @@ fn handle_key(code: KeyCode, vp: &mut Viewport, mode: &mut Mode, nodes: &mut Vec
                 }
                 KeyCode::Char('L') => {
                     if let Some(node) = nodes.iter_mut().find(|n| n.id == id) {
-                        node.x += 10;
+                        node.x += 5;
                     }
                 }
                 KeyCode::Char('k') => {
@@ -667,7 +671,7 @@ fn handle_key(code: KeyCode, vp: &mut Viewport, mode: &mut Mode, nodes: &mut Vec
                 }
                 KeyCode::Char('K') => {
                     if let Some(node) = nodes.iter_mut().find(|n| n.id == id) {
-                        node.y -= 10;
+                        node.y -= 5;
                     }
                 }
                 KeyCode::Char('j') => {
@@ -677,7 +681,68 @@ fn handle_key(code: KeyCode, vp: &mut Viewport, mode: &mut Mode, nodes: &mut Vec
                 }
                 KeyCode::Char('J') => {
                     if let Some(node) = nodes.iter_mut().find(|n| n.id == id) {
-                        node.y += 10;
+                        node.y += 5;
+                    }
+                }
+                KeyCode::Esc => *mode = Mode::SelectedBlock(id, BlockMode::Selected),
+                _ => {}
+            }
+        }
+        Mode::SelectedBlock(id, BlockMode::Resizing) => {
+            let id = *id;
+            match code {
+                // expand: grow the box in the given direction
+                KeyCode::Char('h') => {
+                    if let Some(node) = nodes.iter_mut().find(|n| n.id == id) {
+                        node.x -= 1;
+                        node.width += 1;
+                    }
+                }
+                KeyCode::Char('l') => {
+                    if let Some(node) = nodes.iter_mut().find(|n| n.id == id) {
+                        node.width += 1;
+                    }
+                }
+                KeyCode::Char('k') => {
+                    if let Some(node) = nodes.iter_mut().find(|n| n.id == id) {
+                        node.y -= 1;
+                        node.height += 1;
+                    }
+                }
+                KeyCode::Char('j') => {
+                    if let Some(node) = nodes.iter_mut().find(|n| n.id == id) {
+                        node.height += 1;
+                    }
+                }
+                // shrink: contract the box from the given direction
+                KeyCode::Char('H') => {
+                    if let Some(node) = nodes.iter_mut().find(|n| n.id == id) {
+                        if node.width > 3 {
+                            node.x += 1;
+                            node.width -= 1;
+                        }
+                    }
+                }
+                KeyCode::Char('L') => {
+                    if let Some(node) = nodes.iter_mut().find(|n| n.id == id) {
+                        if node.width > 3 {
+                            node.width -= 1;
+                        }
+                    }
+                }
+                KeyCode::Char('K') => {
+                    if let Some(node) = nodes.iter_mut().find(|n| n.id == id) {
+                        if node.height > 3 {
+                            node.y += 1;
+                            node.height -= 1;
+                        }
+                    }
+                }
+                KeyCode::Char('J') => {
+                    if let Some(node) = nodes.iter_mut().find(|n| n.id == id) {
+                        if node.height > 3 {
+                            node.height -= 1;
+                        }
                     }
                 }
                 KeyCode::Esc => *mode = Mode::SelectedBlock(id, BlockMode::Selected),
@@ -692,6 +757,10 @@ fn handle_key(code: KeyCode, vp: &mut Viewport, mode: &mut Mode, nodes: &mut Vec
             KeyCode::Char('m') => {
                 let id = *id;
                 *mode = Mode::SelectedBlock(id, BlockMode::Moving);
+            }
+            KeyCode::Char('r') => {
+                let id = *id;
+                *mode = Mode::SelectedBlock(id, BlockMode::Resizing);
             }
             KeyCode::Char('i') => {
                 let id = *id;
