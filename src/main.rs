@@ -1,3 +1,5 @@
+pub mod labels;
+
 use ratatui::{
     Frame,
     layout::{Alignment, Rect},
@@ -69,7 +71,7 @@ struct Viewport {
 #[derive(Clone, PartialEq)]
 enum BlockMode {
     Selected,
-    Moving,
+    // Moving,
     Resizing,
     Editing { input: String, cursor: usize },
 }
@@ -78,6 +80,57 @@ enum BlockMode {
 enum Mode {
     Normal,
     SelectedBlock(NodeId, BlockMode),
+    /// Jump-to-node selection mode (inspired by vimium/hop.nvim).
+    ///
+    /// `labels`  — assignment of a label string to every visible node.
+    /// `current` — characters typed so far in this mode.
+    /// `prev`    — mode to return to on Esc or a dead sequence.
+    Selecting {
+        labels: Vec<(NodeId, String)>,
+        current: String,
+        prev: Box<Mode>,
+    },
+}
+
+// ── Label pools ───────────────────────────────────────────────────────────────
+
+/// Home-row keys: comfortable to press, used as 1-char labels.
+static SINGLE_CHARS: &[char] = &['a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l'];
+
+/// Reach keys: used only as the *first* char of 2-char labels.
+/// Must be disjoint from SINGLE_CHARS.
+static DOUBLE_CHARS: &[char] = &['e', 'r', 'u', 'i', 'o'];
+
+/// Assign labels to every node that is currently visible on screen.
+fn assign_labels(
+    nodes: &[Node],
+    vp: &Viewport,
+    frame_w: isize,
+    frame_h: isize,
+) -> Vec<(NodeId, String)> {
+    use crate::labels::LabelIter;
+
+    let visible: Vec<NodeId> = nodes
+        .iter()
+        .filter(|n| {
+            let (sx, sy) = to_screen(n.x, n.y, vp);
+            clip_to_frame(
+                sx,
+                sy,
+                n.width as isize,
+                n.height as isize,
+                frame_w,
+                frame_h,
+            )
+            .is_some()
+        })
+        .map(|n| n.id)
+        .collect();
+
+    LabelIter::new(SINGLE_CHARS, DOUBLE_CHARS)
+        .zip(visible)
+        .map(|(label, id)| (id, label))
+        .collect()
 }
 
 // ── Coordinate helpers ───────────────────────────────────────────────────────
@@ -528,6 +581,94 @@ fn render_connections(frame: &mut Frame, nodes: &[Node], edges: &[Edge], vp: &Vi
     }
 }
 
+// ── Selection label overlay ───────────────────────────────────────────────────
+
+/// Render jump labels on top of every node that still matches `current`.
+///
+/// Colour scheme:
+///   - matched prefix  → dark gray fg, default bg  (dim: already typed)
+///   - remaining chars → black fg, bright yellow bg  (the "target" hint)
+///   - unmatched nodes → not rendered at all
+fn render_selection_labels(
+    frame: &mut Frame,
+    nodes: &[Node],
+    vp: &Viewport,
+    labels: &[(NodeId, String)],
+    current: &str,
+) {
+    use ratatui::{
+        style::Modifier,
+        text::{Line, Span},
+        widgets::Paragraph,
+    };
+
+    let fw = frame.area().width as isize;
+    let fh = frame.area().height as isize - 1;
+
+    for (id, label) in labels {
+        // Skip labels that can't match the current sequence any more.
+        if !label.starts_with(current) {
+            continue;
+        }
+
+        let node = match nodes.iter().find(|n| n.id == *id) {
+            Some(n) => n,
+            None => continue,
+        };
+
+        let (sx, sy) = to_screen(node.x, node.y, vp);
+        let (cx, cy, cw, ch) =
+            match clip_to_frame(sx, sy, node.width as isize, node.height as isize, fw, fh) {
+                Some(r) => r,
+                None => continue,
+            };
+
+        if cw < 1 || ch < 1 {
+            continue;
+        }
+
+        // Place the label one cell inside the top-left corner of the box.
+        // If the box is clipped on the left/top we skip — label wouldn't fit.
+        if cx != sx || cy != sy {
+            // Node is clipped at its origin; skip to avoid overlapping border.
+            continue;
+        }
+
+        // The label sits on row sy+1 (inside border), col sx+1.
+        let label_x = (sx + 1) as u16;
+        let label_y = (sy + 1) as u16;
+
+        if label_x >= frame.area().width || label_y >= frame.area().height {
+            continue;
+        }
+
+        let matched_len = current.len();
+        let matched = &label[..matched_len];
+        let rest = &label[matched_len..];
+
+        let matched_style = Style::default().fg(Color::DarkGray);
+        let hint_style = Style::default()
+            .fg(Color::Black)
+            .bg(Color::Yellow)
+            .add_modifier(Modifier::BOLD);
+
+        let spans = vec![
+            Span::styled(matched, matched_style),
+            Span::styled(rest, hint_style),
+        ];
+
+        let label_w = label.chars().count() as u16;
+        let available_w = frame.area().width.saturating_sub(label_x);
+        let render_w = label_w.min(available_w);
+        if render_w == 0 {
+            continue;
+        }
+
+        let area = Rect::new(label_x, label_y, render_w, 1);
+        frame.render_widget(Paragraph::new(Line::from(spans)), area);
+    }
+}
+
 // ── Edit popup ────────────────────────────────────────────────────────────────
 
 fn popup_area(area: Rect, percent_x: u16, rows: u16) -> Rect {
@@ -567,12 +708,9 @@ fn render_hint(frame: &mut Frame, mode: &Mode) {
     let area = frame.area();
     let hint_area = Rect::new(0, area.height.saturating_sub(1), area.width, 1);
     let text = match mode {
-        Mode::Normal => "  [normal]  hjkl: pan   q: quit",
+        Mode::Normal => "  [normal]  hjkl: pan   enter: select node   q: quit",
         Mode::SelectedBlock(_, BlockMode::Selected) => {
-            "  [selected]  hjkl: pan   m: move   r: resize   i: edit   esc: deselect   q: quit"
-        }
-        Mode::SelectedBlock(_, BlockMode::Moving) => {
-            "  [move block]  hjkl: move ×1   HJKL: move ×5 esc: back   q: quit"
+            "  [selected]   hjkl: move ×1   HJKL: move ×5   r: resize   i: edit   enter: select node   esc: deselect   q: quit"
         }
         Mode::SelectedBlock(_, BlockMode::Resizing) => {
             "  [resize]  hjkl: expand in direction   HJKL: shrink from direction   esc: back   q: quit"
@@ -580,6 +718,7 @@ fn render_hint(frame: &mut Frame, mode: &Mode) {
         Mode::SelectedBlock(_, BlockMode::Editing { .. }) => {
             "  [editing]  enter: confirm   esc: cancel"
         }
+        Mode::Selecting { .. } => "  [select node]  type label to jump   esc: cancel",
     };
     let hint = Paragraph::new(text).style(Style::default().fg(Color::DarkGray));
     frame.render_widget(hint, hint_area);
@@ -617,7 +756,14 @@ fn input_delete_char(input: &mut String, cursor: &mut usize) {
 
 // ── Input handling ────────────────────────────────────────────────────────────
 
-fn handle_key(code: KeyCode, vp: &mut Viewport, mode: &mut Mode, nodes: &mut Vec<Node>) {
+fn handle_key(
+    code: KeyCode,
+    vp: &mut Viewport,
+    mode: &mut Mode,
+    nodes: &mut Vec<Node>,
+    frame_w: isize,
+    frame_h: isize,
+) {
     match mode {
         Mode::SelectedBlock(id, BlockMode::Editing { input, cursor }) => {
             match code {
@@ -641,53 +787,7 @@ fn handle_key(code: KeyCode, vp: &mut Viewport, mode: &mut Mode, nodes: &mut Vec
                 _ => {}
             }
         }
-        Mode::SelectedBlock(id, BlockMode::Moving) => {
-            let id = *id;
-            match code {
-                KeyCode::Char('h') => {
-                    if let Some(node) = nodes.iter_mut().find(|n| n.id == id) {
-                        node.x -= 1;
-                    }
-                }
-                KeyCode::Char('H') => {
-                    if let Some(node) = nodes.iter_mut().find(|n| n.id == id) {
-                        node.x -= 5;
-                    }
-                }
-                KeyCode::Char('l') => {
-                    if let Some(node) = nodes.iter_mut().find(|n| n.id == id) {
-                        node.x += 1;
-                    }
-                }
-                KeyCode::Char('L') => {
-                    if let Some(node) = nodes.iter_mut().find(|n| n.id == id) {
-                        node.x += 5;
-                    }
-                }
-                KeyCode::Char('k') => {
-                    if let Some(node) = nodes.iter_mut().find(|n| n.id == id) {
-                        node.y -= 1;
-                    }
-                }
-                KeyCode::Char('K') => {
-                    if let Some(node) = nodes.iter_mut().find(|n| n.id == id) {
-                        node.y -= 5;
-                    }
-                }
-                KeyCode::Char('j') => {
-                    if let Some(node) = nodes.iter_mut().find(|n| n.id == id) {
-                        node.y += 1;
-                    }
-                }
-                KeyCode::Char('J') => {
-                    if let Some(node) = nodes.iter_mut().find(|n| n.id == id) {
-                        node.y += 5;
-                    }
-                }
-                KeyCode::Esc => *mode = Mode::SelectedBlock(id, BlockMode::Selected),
-                _ => {}
-            }
-        }
+
         Mode::SelectedBlock(id, BlockMode::Resizing) => {
             let id = *id;
             match code {
@@ -750,13 +850,45 @@ fn handle_key(code: KeyCode, vp: &mut Viewport, mode: &mut Mode, nodes: &mut Vec
             }
         }
         Mode::SelectedBlock(id, BlockMode::Selected) => match code {
-            KeyCode::Char('h') => vp.x -= 3,
-            KeyCode::Char('l') => vp.x += 3,
-            KeyCode::Char('k') => vp.y += 3,
-            KeyCode::Char('j') => vp.y -= 3,
-            KeyCode::Char('m') => {
-                let id = *id;
-                *mode = Mode::SelectedBlock(id, BlockMode::Moving);
+            KeyCode::Char('h') => {
+                if let Some(node) = nodes.iter_mut().find(|n| n.id == *id) {
+                    node.x -= 1;
+                }
+            }
+            KeyCode::Char('H') => {
+                if let Some(node) = nodes.iter_mut().find(|n| n.id == *id) {
+                    node.x -= 5;
+                }
+            }
+            KeyCode::Char('l') => {
+                if let Some(node) = nodes.iter_mut().find(|n| n.id == *id) {
+                    node.x += 1;
+                }
+            }
+            KeyCode::Char('L') => {
+                if let Some(node) = nodes.iter_mut().find(|n| n.id == *id) {
+                    node.x += 5;
+                }
+            }
+            KeyCode::Char('k') => {
+                if let Some(node) = nodes.iter_mut().find(|n| n.id == *id) {
+                    node.y -= 1;
+                }
+            }
+            KeyCode::Char('K') => {
+                if let Some(node) = nodes.iter_mut().find(|n| n.id == *id) {
+                    node.y -= 5;
+                }
+            }
+            KeyCode::Char('j') => {
+                if let Some(node) = nodes.iter_mut().find(|n| n.id == *id) {
+                    node.y += 1;
+                }
+            }
+            KeyCode::Char('J') => {
+                if let Some(node) = nodes.iter_mut().find(|n| n.id == *id) {
+                    node.y += 5;
+                }
             }
             KeyCode::Char('r') => {
                 let id = *id;
@@ -778,6 +910,15 @@ fn handle_key(code: KeyCode, vp: &mut Viewport, mode: &mut Mode, nodes: &mut Vec
                     },
                 );
             }
+            KeyCode::Enter => {
+                let labels = assign_labels(nodes, vp, frame_w, frame_h);
+                let prev = Box::new(mode.clone());
+                *mode = Mode::Selecting {
+                    labels,
+                    current: String::new(),
+                    prev,
+                };
+            }
             KeyCode::Esc => *mode = Mode::Normal,
             _ => {}
         },
@@ -786,8 +927,54 @@ fn handle_key(code: KeyCode, vp: &mut Viewport, mode: &mut Mode, nodes: &mut Vec
             KeyCode::Char('l') => vp.x += 3,
             KeyCode::Char('k') => vp.y += 3,
             KeyCode::Char('j') => vp.y -= 3,
+            KeyCode::Enter => {
+                let labels = assign_labels(nodes, vp, frame_w, frame_h);
+                let prev = Box::new(mode.clone());
+                *mode = Mode::Selecting {
+                    labels,
+                    current: String::new(),
+                    prev,
+                };
+            }
             _ => {}
         },
+        Mode::Selecting {
+            labels,
+            current,
+            prev,
+        } => {
+            match code {
+                KeyCode::Esc => {
+                    *mode = *prev.clone();
+                }
+                KeyCode::Char(ch) => {
+                    current.push(ch);
+                    let current_str = current.clone();
+                    let prev_mode = *prev.clone();
+
+                    // Check for an exact match first.
+                    if let Some((matched_id, _)) =
+                        labels.iter().find(|(_, label)| *label == current_str)
+                    {
+                        let matched_id = *matched_id;
+                        *mode = Mode::SelectedBlock(matched_id, BlockMode::Selected);
+                        return;
+                    }
+
+                    // Check if any label still has `current` as a prefix.
+                    let any_partial = labels
+                        .iter()
+                        .any(|(_, label)| label.starts_with(current_str.as_str()));
+
+                    if !any_partial {
+                        // Dead end — no label can ever match. Return to prev.
+                        *mode = prev_mode;
+                    }
+                    // Otherwise stay in Selecting with the updated `current`.
+                }
+                _ => {}
+            }
+        }
     }
 }
 
@@ -797,6 +984,13 @@ fn render_map(frame: &mut Frame, nodes: &[Node], edges: &[Edge], vp: &Viewport, 
     frame.render_widget(ratatui::widgets::Clear, frame.area());
     render_connections(frame, nodes, edges, vp);
     render_nodes(frame, nodes, vp, mode);
+    // Selection label overlay — drawn after nodes so labels appear on top.
+    if let Mode::Selecting {
+        labels, current, ..
+    } = mode
+    {
+        render_selection_labels(frame, nodes, vp, labels, current);
+    }
     render_hint(frame, mode);
     if let Mode::SelectedBlock(_, BlockMode::Editing { input, cursor }) = mode {
         render_popup(frame, input, *cursor);
@@ -830,7 +1024,10 @@ fn main() -> color_eyre::Result<()> {
                 if key.code == KeyCode::Char('q') && !editing {
                     break;
                 }
-                handle_key(key.code, &mut vp, &mut mode, &mut nodes);
+                let size = terminal.size()?;
+                let fw = size.width as isize;
+                let fh = size.height as isize - 1; // reserve hint bar row
+                handle_key(key.code, &mut vp, &mut mode, &mut nodes, fw, fh);
             }
         }
     }
