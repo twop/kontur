@@ -1,5 +1,11 @@
-use ratatui::Frame;
-use ratatui::style::Color;
+use ratatui::{
+    Frame,
+    layout::{Alignment, Rect},
+    style::{Color, Style},
+    widgets::{Block, BorderType, Borders, Clear, Paragraph},
+};
+
+use crossterm::event::KeyCode;
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -28,7 +34,7 @@ struct Node {
     y: isize,    // canvas top-left row
     width: u16,  // total box width including borders
     height: u16, // total box height including borders
-    label: &'static str,
+    label: String,
 }
 
 struct Edge {
@@ -56,6 +62,20 @@ enum SegDir {
 struct Viewport {
     x: isize,
     y: isize,
+}
+
+// ── Application mode ──────────────────────────────────────────────────────────
+
+#[derive(Clone, PartialEq)]
+enum BlockMode {
+    Selected,
+    Editing { input: String, cursor: usize },
+}
+
+#[derive(Clone, PartialEq)]
+enum Mode {
+    Normal,
+    SelectedBlock(NodeId, BlockMode),
 }
 
 // ── Coordinate helpers ───────────────────────────────────────────────────────
@@ -105,7 +125,7 @@ fn make_demo_graph() -> (Vec<Node>, Vec<Edge>) {
             y: 5,
             width: 16,
             height: 5,
-            label: "Alpha",
+            label: "Alpha".to_string(),
         },
         Node {
             id: beta,
@@ -113,7 +133,7 @@ fn make_demo_graph() -> (Vec<Node>, Vec<Edge>) {
             y: 5,
             width: 16,
             height: 5,
-            label: "Beta",
+            label: "Beta".to_string(),
         },
         Node {
             id: gamma,
@@ -121,7 +141,7 @@ fn make_demo_graph() -> (Vec<Node>, Vec<Edge>) {
             y: 18,
             width: 16,
             height: 5,
-            label: "Gamma",
+            label: "Gamma".to_string(),
         },
         Node {
             id: delta,
@@ -129,7 +149,7 @@ fn make_demo_graph() -> (Vec<Node>, Vec<Edge>) {
             y: 18,
             width: 16,
             height: 5,
-            label: "Delta",
+            label: "Delta".to_string(),
         },
     ];
 
@@ -320,12 +340,7 @@ fn calculate_path(nodes: &[Node], edge: &Edge) -> Vec<Point> {
 
 // ── Node rendering ────────────────────────────────────────────────────────────
 
-fn render_nodes(frame: &mut Frame, nodes: &[Node], vp: &Viewport) {
-    use ratatui::{
-        layout::{Alignment, Rect},
-        widgets::{Block, Borders, Clear, Paragraph},
-    };
-
+fn render_nodes(frame: &mut Frame, nodes: &[Node], vp: &Viewport, mode: &Mode) {
     let fw = frame.area().width as isize;
     let fh = frame.area().height as isize - 1; // reserve last row for hint bar
 
@@ -360,15 +375,25 @@ fn render_nodes(frame: &mut Frame, nodes: &[Node], vp: &Viewport) {
             borders |= Borders::BOTTOM;
         }
 
+        let is_selected = matches!(mode, Mode::SelectedBlock(id, _) if *id == node.id);
+
         frame.render_widget(Clear, area);
 
-        let block = Block::default().borders(borders).title(node.label);
+        let block = if is_selected {
+            Block::default()
+                .borders(borders)
+                .border_type(BorderType::Double)
+                .border_style(Style::default().fg(Color::Yellow))
+                .title(node.label.as_str())
+        } else {
+            Block::default().borders(borders).title(node.label.as_str())
+        };
 
         let inner = block.inner(area);
         frame.render_widget(block, area);
 
         if inner.width > 0 && inner.height > 0 {
-            let para = Paragraph::new(node.label).alignment(Alignment::Center);
+            let para = Paragraph::new(node.label.as_str()).alignment(Alignment::Center);
             frame.render_widget(para, inner);
         }
     }
@@ -501,23 +526,155 @@ fn render_connections(frame: &mut Frame, nodes: &[Node], edges: &[Edge], vp: &Vi
     }
 }
 
+// ── Edit popup ────────────────────────────────────────────────────────────────
+
+fn popup_area(area: Rect, percent_x: u16, rows: u16) -> Rect {
+    use ratatui::layout::{Constraint, Flex, Layout};
+    let vertical = Layout::vertical([Constraint::Length(rows)]).flex(Flex::Center);
+    let horizontal = Layout::horizontal([Constraint::Percentage(percent_x)]).flex(Flex::Center);
+    let [area] = vertical.areas(area);
+    let [area] = horizontal.areas(area);
+    area
+}
+
+fn render_popup(frame: &mut Frame, input: &str, cursor: usize) {
+    use ratatui::{layout::Position, widgets::Paragraph};
+
+    let area = popup_area(frame.area(), 50, 3);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Yellow))
+        .title(" Edit label ");
+
+    let inner = block.inner(area);
+    frame.render_widget(Clear, area);
+    frame.render_widget(block, area);
+
+    let para = Paragraph::new(input);
+    frame.render_widget(para, inner);
+
+    // place the terminal cursor inside the popup at the right column
+    #[allow(clippy::cast_possible_truncation)]
+    frame.set_cursor_position(Position::new(inner.x + cursor as u16, inner.y));
+}
+
 // ── Hint bar ─────────────────────────────────────────────────────────────────
 
-fn render_hint(frame: &mut Frame) {
+fn render_hint(frame: &mut Frame, mode: &Mode) {
     use ratatui::{layout::Rect, style::Style, widgets::Paragraph};
     let area = frame.area();
     let hint_area = Rect::new(0, area.height.saturating_sub(1), area.width, 1);
-    let hint = Paragraph::new("  hjkl: pan   q: quit").style(Style::default().fg(Color::DarkGray));
+    let text = match mode {
+        Mode::Normal => "  hjkl: pan   q: quit",
+        Mode::SelectedBlock(_, BlockMode::Selected) => {
+            "  hjkl: pan   i: edit   esc: deselect   q: quit"
+        }
+        Mode::SelectedBlock(_, BlockMode::Editing { .. }) => "  enter: confirm   esc: cancel",
+    };
+    let hint = Paragraph::new(text).style(Style::default().fg(Color::DarkGray));
     frame.render_widget(hint, hint_area);
+}
+
+// ── Cursor / input helpers ───────────────────────────────────────────────────
+
+fn clamp_cursor(input: &str, pos: usize) -> usize {
+    pos.clamp(0, input.chars().count())
+}
+
+fn byte_index(input: &str, cursor: usize) -> usize {
+    input
+        .char_indices()
+        .map(|(i, _)| i)
+        .nth(cursor)
+        .unwrap_or(input.len())
+}
+
+fn input_enter_char(input: &mut String, cursor: &mut usize, ch: char) {
+    let idx = byte_index(input, *cursor);
+    input.insert(idx, ch);
+    *cursor = clamp_cursor(input, cursor.saturating_add(1));
+}
+
+fn input_delete_char(input: &mut String, cursor: &mut usize) {
+    if *cursor == 0 {
+        return;
+    }
+    let before = input.chars().take(*cursor - 1);
+    let after = input.chars().skip(*cursor);
+    *input = before.chain(after).collect();
+    *cursor = clamp_cursor(input, cursor.saturating_sub(1));
+}
+
+// ── Input handling ────────────────────────────────────────────────────────────
+
+fn handle_key(code: KeyCode, vp: &mut Viewport, mode: &mut Mode, nodes: &mut Vec<Node>) {
+    match mode {
+        Mode::SelectedBlock(id, BlockMode::Editing { input, cursor }) => {
+            match code {
+                KeyCode::Char(ch) => input_enter_char(input, cursor, ch),
+                KeyCode::Backspace => input_delete_char(input, cursor),
+                KeyCode::Left => *cursor = clamp_cursor(input, cursor.saturating_sub(1)),
+                KeyCode::Right => *cursor = clamp_cursor(input, cursor.saturating_add(1)),
+                KeyCode::Enter => {
+                    // commit the new label into the node
+                    let id = *id;
+                    let new_label = input.clone();
+                    if let Some(node) = nodes.iter_mut().find(|n| n.id == id) {
+                        node.label = new_label;
+                    }
+                    *mode = Mode::SelectedBlock(id, BlockMode::Selected);
+                }
+                KeyCode::Esc => {
+                    let id = *id;
+                    *mode = Mode::SelectedBlock(id, BlockMode::Selected);
+                }
+                _ => {}
+            }
+        }
+        Mode::SelectedBlock(id, BlockMode::Selected) => match code {
+            KeyCode::Char('h') => vp.x -= 3,
+            KeyCode::Char('l') => vp.x += 3,
+            KeyCode::Char('k') => vp.y += 3,
+            KeyCode::Char('j') => vp.y -= 3,
+            KeyCode::Char('i') => {
+                let id = *id;
+                let current = nodes
+                    .iter()
+                    .find(|n| n.id == id)
+                    .map(|n| n.label.clone())
+                    .unwrap_or_default();
+                let cursor = current.chars().count();
+                *mode = Mode::SelectedBlock(
+                    id,
+                    BlockMode::Editing {
+                        input: current,
+                        cursor,
+                    },
+                );
+            }
+            KeyCode::Esc => *mode = Mode::Normal,
+            _ => {}
+        },
+        Mode::Normal => match code {
+            KeyCode::Char('h') => vp.x -= 3,
+            KeyCode::Char('l') => vp.x += 3,
+            KeyCode::Char('k') => vp.y += 3,
+            KeyCode::Char('j') => vp.y -= 3,
+            _ => {}
+        },
+    }
 }
 
 // ── Top-level render ──────────────────────────────────────────────────────────
 
-fn render_map(frame: &mut Frame, nodes: &[Node], edges: &[Edge], vp: &Viewport) {
+fn render_map(frame: &mut Frame, nodes: &[Node], edges: &[Edge], vp: &Viewport, mode: &Mode) {
     frame.render_widget(ratatui::widgets::Clear, frame.area());
     render_connections(frame, nodes, edges, vp);
-    render_nodes(frame, nodes, vp);
-    render_hint(frame);
+    render_nodes(frame, nodes, vp, mode);
+    render_hint(frame, mode);
+    if let Mode::SelectedBlock(_, BlockMode::Editing { input, cursor }) = mode {
+        render_popup(frame, input, *cursor);
+    }
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────
@@ -531,25 +688,23 @@ fn main() -> color_eyre::Result<()> {
     let backend = ratatui::backend::CrosstermBackend::new(stdout);
     let mut terminal = ratatui::Terminal::new(backend)?;
 
-    let (nodes, edges) = make_demo_graph();
+    let (mut nodes, edges) = make_demo_graph();
     let mut vp = Viewport { x: 0, y: 0 };
+    let mut mode = Mode::SelectedBlock(NodeId(0), BlockMode::Selected);
 
     loop {
         terminal.draw(|frame| {
-            render_map(frame, &nodes, &edges, &vp);
+            render_map(frame, &nodes, &edges, &vp, &mode);
         })?;
 
         if crossterm::event::poll(std::time::Duration::from_millis(50))? {
             if let crossterm::event::Event::Key(key) = crossterm::event::read()? {
-                use crossterm::event::KeyCode;
-                match key.code {
-                    KeyCode::Char('q') => break,
-                    KeyCode::Char('h') => vp.x -= 3,
-                    KeyCode::Char('l') => vp.x += 3,
-                    KeyCode::Char('k') => vp.y += 3,
-                    KeyCode::Char('j') => vp.y -= 3,
-                    _ => {}
+                // quit only when not typing inside an edit popup
+                let editing = matches!(mode, Mode::SelectedBlock(_, BlockMode::Editing { .. }));
+                if key.code == KeyCode::Char('q') && !editing {
+                    break;
                 }
+                handle_key(key.code, &mut vp, &mut mode, &mut nodes);
             }
         }
     }
