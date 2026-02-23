@@ -682,95 +682,204 @@ pub fn classify_shape(from: &Node, from_side: Side, to: &Node, to_side: Side) ->
                 offset: DEFAULT_OFFSET,
             }
         }
-        // Horizontal S-shape: stubs face each other with room to jog in the middle.
+        // Right → Left  (S-shape, nodes separated horizontally)
+        //
+        //   xxx
+        //   xSx<--------+
+        //   xxx         |
+        //               |   xxx
+        //               +-->xEx
+        //                   xxx
         (Side::Right, Side::Left) if start.x < end.x => ConnectorShape::SShape {
             start,
             axis: Axis::Horizontal,
             end,
         },
+
+        // Left → Right  (S-shape, nodes separated horizontally)
+        //
+        //   xxx
+        //   xEx<--------+
+        //   xxx         |
+        //               |   xxx
+        //               +-->xSx
+        //                   xxx
         (Side::Left, Side::Right) if start.x > end.x => ConnectorShape::SShape {
             start,
             axis: Axis::Horizontal,
             end,
         },
 
-        // Vertical S-shape: stubs face each other vertically with room to jog.
+        // Bottom → Top  (S-shape, nodes separated vertically)
+        //
+        //   xxx
+        //   xSx
+        //   xxx
+        //    |
+        //    +---+
+        //        |
+        //       xxx
+        //       xEx
+        //       xxx
+        //
         (Side::Bottom, Side::Top) if start.y < end.y => ConnectorShape::SShape {
             start,
             axis: Axis::Vertical,
             end,
         },
+
+        // Top → Bottom  (S-shape, nodes separated vertically)
+        //
+        //       xxx
+        //       xEx
+        //       xxx
+        //        |
+        //    +---+
+        //    |
+        //   xxx
+        //   xSx
+        //   xxx
         (Side::Top, Side::Bottom) if start.y > end.y => ConnectorShape::SShape {
             start,
             axis: Axis::Vertical,
             end,
         },
 
-        // Corner: one horizontal stub, one vertical stub.
-        // Simple corner only works when the vertical endpoint is on the correct
-        // side of the horizontal endpoint's row (or the horizontal endpoint is
-        // on the correct side of the vertical endpoint's column); otherwise the
-        // single bend would require travelling the wrong direction on one axis
-        // and a composite is needed instead.
-        (Side::Right, Side::Top) if end.y <= start.y => ConnectorShape::Corner {
+        // Right → Top
+        //
+        //         xxx
+        //    +--->xSx
+        //    |    xxx
+        //    |
+        //    |
+        //    |
+        //   xxx
+        //   xEx
+        //   xxx
+        (Side::Right, Side::Top) if end.y < start.y => ConnectorShape::Corner {
             start,
             end,
             start_axis: Axis::Horizontal,
         },
-        (Side::Right, Side::Top) => todo!("composite for Right→Top when end is not above start"),
-        (Side::Right, Side::Bottom) if end.y >= start.y => ConnectorShape::Corner {
+        (Side::Right, Side::Top) => {
+            todo!("composite for Right→Top when end node is not above start")
+        }
+
+        // Right → Bottom
+        //
+        //   xxx
+        //   xSx----+
+        //   xxx    |
+        //         xxx
+        //         xEx
+        //         xxx
+        (Side::Right, Side::Bottom) if end.y > start.y => ConnectorShape::Corner {
             start,
             end,
             start_axis: Axis::Horizontal,
         },
         (Side::Right, Side::Bottom) => {
-            todo!("composite for Right→Bottom when end is not below start")
+            todo!("composite for Right→Bottom when end node is not below start")
         }
+
+        // Left → Top  (corner, end node is above and to the left)
+        //
+        //   ^
+        //   |
+        //   xxx    +---xxx
+        //   xxx    |   xxx
+        //          +------  (continues leftward to start)
+        //
         (Side::Left, Side::Top) if end.y < start.y => ConnectorShape::Corner {
             start,
             end,
             start_axis: Axis::Horizontal,
         },
-        (Side::Left, Side::Top) => todo!("composite for Left→Top when end is not above start"),
+        (Side::Left, Side::Top) => {
+            todo!("composite for Left→Top when end node is not above start")
+        }
+
+        // Left → Bottom  (corner, end node is below and to the left)
+        //
+        //          +------  (continues leftward to start)
+        //   xxx    |   xxx
+        //   xxx    +---xxx
+        //   |
+        //   v
+        //
         (Side::Left, Side::Bottom) if end.y > start.y => ConnectorShape::Corner {
             start,
             end,
             start_axis: Axis::Horizontal,
         },
         (Side::Left, Side::Bottom) => {
-            todo!("composite for Left→Bottom when end is not below start")
+            todo!("composite for Left→Bottom when end node is not below start")
         }
+
+        // Top → Right  (corner, end node is to the right and above)
+        //
+        //   |        xxx---+
+        //   xxx      xxx   |
+        //   xxx            |
+        //   +------------->
+        //
+        // (vertical run first, then horizontal)
+        //
         (Side::Top, Side::Right) if end.x > start.x => ConnectorShape::Corner {
             start,
             end,
             start_axis: Axis::Vertical,
         },
         (Side::Top, Side::Right) => {
-            todo!("composite for Top→Right when end is not to the right of start")
+            todo!("composite for Top→Right when end node is not to the right of start")
         }
+
+        // Top → Left  (corner, end node is to the left and above)
+        //
+        //              |
+        //   +---xxx   xxx
+        //   |   xxx   xxx
+        //   <---------+
+        //
         (Side::Top, Side::Left) if end.x < start.x => ConnectorShape::Corner {
             start,
             end,
             start_axis: Axis::Vertical,
         },
         (Side::Top, Side::Left) => {
-            todo!("composite for Top→Left when end is not to the left of start")
+            todo!("composite for Top→Left when end node is not to the left of start")
         }
+
+        // Bottom → Right  (corner, end node is to the right and below)
+        //
+        //   +------------->
+        //   xxx            |
+        //   xxx      xxx   |
+        //   |        xxx---+
+        //
         (Side::Bottom, Side::Right) if end.x > start.x => ConnectorShape::Corner {
             start,
             end,
             start_axis: Axis::Vertical,
         },
         (Side::Bottom, Side::Right) => {
-            todo!("composite for Bottom→Right when end is not to the right of start")
+            todo!("composite for Bottom→Right when end node is not to the right of start")
         }
+
+        // Bottom → Left  (corner, end node is to the left and below)
+        //
+        //   <---------+
+        //   +---xxx   xxx
+        //   |   xxx   xxx
+        //              |
+        //
         (Side::Bottom, Side::Left) if end.x < start.x => ConnectorShape::Corner {
             start,
             end,
             start_axis: Axis::Vertical,
         },
         (Side::Bottom, Side::Left) => {
-            todo!("composite for Bottom→Left when end is not to the left of start")
+            todo!("composite for Bottom→Left when end node is not to the left of start")
         }
 
         // Facing stubs that overlap or cross — not yet implemented.
