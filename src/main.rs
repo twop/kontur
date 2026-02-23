@@ -1,171 +1,15 @@
+pub mod actions;
+pub mod geometry;
 pub mod labels;
-
-use ratatui::{
-    Frame,
-    layout::{Alignment, Rect},
-    style::{Color, Style},
-    widgets::{Block, BorderType, Borders, Clear, Paragraph},
-};
+pub mod path;
+pub mod state;
+pub mod ui;
 
 use crossterm::event::KeyCode;
+use geometry::{SPoint, SRect};
+use state::{AppState, ArrowDecorations, BlockMode, Edge, Mode, Node, NodeId, Side, Viewport};
 
-// ── Types ────────────────────────────────────────────────────────────────────
-
-#[derive(Clone, Copy, PartialEq)]
-struct NodeId(usize);
-
-#[derive(Clone, Copy, PartialEq)]
-enum Side {
-    Top,
-    Bottom,
-    Left,
-    Right,
-}
-
-#[derive(Clone, Copy)]
-enum ArrowDir {
-    Forward,  // arrowhead at destination only
-    Backward, // arrowhead at source only
-    Both,     // arrowheads at both ends
-}
-
-#[allow(dead_code)]
-struct Node {
-    id: NodeId,
-    x: isize,    // canvas top-left column
-    y: isize,    // canvas top-left row
-    width: u16,  // total box width including borders
-    height: u16, // total box height including borders
-    label: String,
-}
-
-struct Edge {
-    from_id: NodeId,
-    from_side: Side,
-    to_id: NodeId,
-    to_side: Side,
-    dir: ArrowDir,
-}
-
-#[derive(Clone, Copy)]
-struct Point {
-    x: isize,
-    y: isize,
-}
-
-#[derive(Clone, Copy, PartialEq)]
-enum SegDir {
-    Right,
-    Left,
-    Up,
-    Down,
-}
-
-struct Viewport {
-    x: isize,
-    y: isize,
-}
-
-// ── Application mode ──────────────────────────────────────────────────────────
-
-#[derive(Clone, PartialEq)]
-enum BlockMode {
-    Selected,
-    // Moving,
-    Resizing,
-    Editing { input: String, cursor: usize },
-}
-
-#[derive(Clone, PartialEq)]
-enum Mode {
-    Normal,
-    SelectedBlock(NodeId, BlockMode),
-    /// Jump-to-node selection mode (inspired by vimium/hop.nvim).
-    ///
-    /// `labels`  — assignment of a label string to every visible node.
-    /// `current` — characters typed so far in this mode.
-    /// `prev`    — mode to return to on Esc or a dead sequence.
-    Selecting {
-        labels: Vec<(NodeId, String)>,
-        current: String,
-        prev: Box<Mode>,
-    },
-}
-
-// ── Label pools ───────────────────────────────────────────────────────────────
-
-/// Home-row keys: comfortable to press, used as 1-char labels.
-static SINGLE_CHARS: &[char] = &['a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l'];
-
-/// Reach keys: used only as the *first* char of 2-char labels.
-/// Must be disjoint from SINGLE_CHARS.
-static DOUBLE_CHARS: &[char] = &['e', 'r', 'u', 'i', 'o'];
-
-/// Assign labels to every node that is currently visible on screen.
-fn assign_labels(
-    nodes: &[Node],
-    vp: &Viewport,
-    frame_w: isize,
-    frame_h: isize,
-) -> Vec<(NodeId, String)> {
-    use crate::labels::LabelIter;
-
-    let visible: Vec<NodeId> = nodes
-        .iter()
-        .filter(|n| {
-            let (sx, sy) = to_screen(n.x, n.y, vp);
-            clip_to_frame(
-                sx,
-                sy,
-                n.width as isize,
-                n.height as isize,
-                frame_w,
-                frame_h,
-            )
-            .is_some()
-        })
-        .map(|n| n.id)
-        .collect();
-
-    LabelIter::new(SINGLE_CHARS, DOUBLE_CHARS)
-        .zip(visible)
-        .map(|(label, id)| (id, label))
-        .collect()
-}
-
-// ── Coordinate helpers ───────────────────────────────────────────────────────
-
-fn to_screen(canvas_x: isize, canvas_y: isize, vp: &Viewport) -> (isize, isize) {
-    (canvas_x - vp.x, canvas_y - vp.y)
-}
-
-fn in_frame(x: isize, y: isize, frame: &Frame) -> bool {
-    let a = frame.area();
-    x >= 0 && y >= 0 && x < a.width as isize && y < a.height as isize
-}
-
-// ── Clipping ─────────────────────────────────────────────────────────────────
-
-/// Returns Some((clip_x, clip_y, clip_w, clip_h)) or None
-fn clip_to_frame(
-    nx: isize,
-    ny: isize,
-    nw: isize,
-    nh: isize,
-    fw: isize,
-    fh: isize,
-) -> Option<(isize, isize, isize, isize)> {
-    if nx >= fw || nx + nw <= 0 || ny >= fh || ny + nh <= 0 {
-        return None;
-    }
-    let x1 = nx.max(0);
-    let x2 = (nx + nw).min(fw);
-    let y1 = ny.max(0);
-    let y2 = (ny + nh).min(fh);
-    Some((x1, y1, x2 - x1, y2 - y1))
-}
-
-// ── Demo graph ───────────────────────────────────────────────────────────────
+// ── Demo graph ────────────────────────────────────────────────────────────────
 
 fn make_demo_graph() -> (Vec<Node>, Vec<Edge>) {
     let alpha = NodeId(0);
@@ -176,555 +20,61 @@ fn make_demo_graph() -> (Vec<Node>, Vec<Edge>) {
     let nodes = [
         Node {
             id: alpha,
-            x: 5,
-            y: 5,
-            width: 16,
-            height: 5,
+            rect: SRect::new(5, 5, 16, 5),
             label: "Alpha".to_string(),
         },
         Node {
             id: beta,
-            x: 35,
-            y: 5,
-            width: 16,
-            height: 5,
+            rect: SRect::new(35, 5, 16, 5),
             label: "Beta".to_string(),
         },
         Node {
             id: gamma,
-            x: 35,
-            y: 18,
-            width: 16,
-            height: 5,
+            rect: SRect::new(35, 18, 16, 5),
             label: "Gamma".to_string(),
         },
         Node {
             id: delta,
-            x: 5,
-            y: 18,
-            width: 16,
-            height: 5,
+            rect: SRect::new(5, 18, 16, 5),
             label: "Delta".to_string(),
         },
     ];
 
     let edges = vec![
-        // Alpha.Right → Beta.Left   — horizontal S-shape
         Edge {
             from_id: alpha,
             from_side: Side::Right,
             to_id: beta,
             to_side: Side::Left,
-            dir: ArrowDir::Forward,
+            dir: ArrowDecorations::Forward,
         },
-        // Beta.Bottom → Gamma.Top   — vertical drop, corner
         Edge {
             from_id: beta,
             from_side: Side::Bottom,
             to_id: gamma,
             to_side: Side::Top,
-            dir: ArrowDir::Forward,
+            dir: ArrowDecorations::Forward,
         },
-        // Gamma.Left  → Delta.Right — reverse horizontal, S-shape
         Edge {
             from_id: gamma,
             from_side: Side::Left,
             to_id: delta,
             to_side: Side::Right,
-            dir: ArrowDir::Both,
+            dir: ArrowDecorations::Both,
         },
         Edge {
             from_id: delta,
             from_side: Side::Top,
             to_id: beta,
             to_side: Side::Bottom,
-            dir: ArrowDir::Backward,
+            dir: ArrowDecorations::Backward,
         },
     ];
 
     (Vec::from(nodes), edges)
 }
 
-// ── Path routing ─────────────────────────────────────────────────────────────
-
-fn connection_point(node: &Node, side: Side) -> Point {
-    match side {
-        Side::Right => Point {
-            x: node.x + node.width as isize - 1,
-            y: node.y + node.height as isize / 2,
-        },
-        Side::Left => Point {
-            x: node.x,
-            y: node.y + node.height as isize / 2,
-        },
-        Side::Top => Point {
-            x: node.x + node.width as isize / 2,
-            y: node.y,
-        },
-        Side::Bottom => Point {
-            x: node.x + node.width as isize / 2,
-            y: node.y + node.height as isize - 1,
-        },
-    }
-}
-
-fn offset_point(p: Point, side: Side) -> Point {
-    match side {
-        Side::Right => Point { x: p.x + 2, y: p.y },
-        Side::Left => Point { x: p.x - 2, y: p.y },
-        Side::Top => Point { x: p.x, y: p.y - 2 },
-        Side::Bottom => Point { x: p.x, y: p.y + 2 },
-    }
-}
-
-fn s_shape(start: Point, s_off: Point, end: Point, e_off: Point) -> Vec<Point> {
-    let mid_x = s_off.x + (e_off.x - s_off.x) / 2;
-    vec![
-        start,
-        s_off,
-        Point {
-            x: mid_x,
-            y: s_off.y,
-        },
-        Point {
-            x: mid_x,
-            y: e_off.y,
-        },
-        e_off,
-        end,
-    ]
-}
-
-fn c_shape(start: Point, s_off: Point, end: Point, e_off: Point, from_side: Side) -> Vec<Point> {
-    match from_side {
-        Side::Right | Side::Left => {
-            let far_x = if from_side == Side::Right {
-                s_off.x.max(e_off.x)
-            } else {
-                s_off.x.min(e_off.x)
-            };
-            vec![
-                start,
-                s_off,
-                Point {
-                    x: far_x,
-                    y: s_off.y,
-                },
-                Point {
-                    x: far_x,
-                    y: e_off.y,
-                },
-                e_off,
-                end,
-            ]
-        }
-        Side::Top | Side::Bottom => {
-            let far_y = if from_side == Side::Bottom {
-                s_off.y.max(e_off.y)
-            } else {
-                s_off.y.min(e_off.y)
-            };
-            vec![
-                start,
-                s_off,
-                Point {
-                    x: s_off.x,
-                    y: far_y,
-                },
-                Point {
-                    x: e_off.x,
-                    y: far_y,
-                },
-                e_off,
-                end,
-            ]
-        }
-    }
-}
-
-fn corner(start: Point, s_off: Point, end: Point, e_off: Point) -> Vec<Point> {
-    vec![
-        start,
-        s_off,
-        Point {
-            x: e_off.x,
-            y: s_off.y,
-        },
-        e_off,
-        end,
-    ]
-}
-
-fn seg_dir(from: Point, to: Point) -> SegDir {
-    if to.x > from.x {
-        SegDir::Right
-    } else if to.x < from.x {
-        SegDir::Left
-    } else if to.y > from.y {
-        SegDir::Down
-    } else {
-        SegDir::Up
-    }
-}
-
-fn calculate_path(nodes: &[Node], edge: &Edge) -> Vec<Point> {
-    let from_node = nodes.iter().find(|n| n.id == edge.from_id).unwrap();
-    let to_node = nodes.iter().find(|n| n.id == edge.to_id).unwrap();
-
-    let start = connection_point(from_node, edge.from_side);
-    let end = connection_point(to_node, edge.to_side);
-    let start_off = offset_point(start, edge.from_side);
-    let end_off = offset_point(end, edge.to_side);
-
-    let dx = end.x - start.x;
-
-    if edge.from_side == edge.to_side {
-        c_shape(start, start_off, end, end_off, edge.from_side)
-    } else if (edge.from_side == Side::Right && edge.to_side == Side::Left)
-        || (edge.from_side == Side::Left && edge.to_side == Side::Right)
-    {
-        if dx.abs() >= 6 {
-            s_shape(start, start_off, end, end_off)
-        } else {
-            corner(start, start_off, end, end_off)
-        }
-    } else {
-        corner(start, start_off, end, end_off)
-    }
-}
-
-// ── Node rendering ────────────────────────────────────────────────────────────
-
-fn render_nodes(frame: &mut Frame, nodes: &[Node], vp: &Viewport, mode: &Mode) {
-    let fw = frame.area().width as isize;
-    let fh = frame.area().height as isize - 1; // reserve last row for hint bar
-
-    for node in nodes {
-        let (screen_x, screen_y) = to_screen(node.x, node.y, vp);
-        let nw = node.width as isize;
-        let nh = node.height as isize;
-
-        let (cx, cy, cw, ch) = match clip_to_frame(screen_x, screen_y, nw, nh, fw, fh) {
-            Some(r) => r,
-            None => continue,
-        };
-
-        if cw <= 0 || ch <= 0 {
-            continue;
-        }
-
-        let area = Rect::new(cx as u16, cy as u16, cw as u16, ch as u16);
-
-        // Determine which border sides are visible (not clipped off)
-        let mut borders = Borders::NONE;
-        if screen_x == cx {
-            borders |= Borders::LEFT;
-        }
-        if screen_x + nw == cx + cw {
-            borders |= Borders::RIGHT;
-        }
-        if screen_y == cy {
-            borders |= Borders::TOP;
-        }
-        if screen_y + nh == cy + ch {
-            borders |= Borders::BOTTOM;
-        }
-
-        let is_selected = matches!(mode, Mode::SelectedBlock(id, _) if *id == node.id);
-
-        frame.render_widget(Clear, area);
-
-        let block = if is_selected {
-            Block::default()
-                .borders(borders)
-                .border_type(BorderType::Double)
-                .border_style(Style::default().fg(Color::Yellow))
-                .title(node.label.as_str())
-        } else {
-            Block::default().borders(borders).title(node.label.as_str())
-        };
-
-        let inner = block.inner(area);
-        frame.render_widget(block, area);
-
-        if inner.width > 0 && inner.height > 0 {
-            let para = Paragraph::new(node.label.as_str()).alignment(Alignment::Center);
-            frame.render_widget(para, inner);
-        }
-    }
-}
-
-// ── Connection rendering ──────────────────────────────────────────────────────
-
-fn render_connections(frame: &mut Frame, nodes: &[Node], edges: &[Edge], vp: &Viewport) {
-    for edge in edges {
-        let path = calculate_path(nodes, edge);
-
-        // Visibility check: skip if no waypoint is on screen
-        let visible = path.iter().any(|p| {
-            let (sx, sy) = to_screen(p.x, p.y, vp);
-            in_frame(sx, sy, frame)
-        });
-        if !visible {
-            continue;
-        }
-
-        // Compute segment directions
-        let seg_dirs: Vec<SegDir> = path.windows(2).map(|pts| seg_dir(pts[0], pts[1])).collect();
-
-        // Draw line segments
-        for (i, pts) in path.windows(2).enumerate() {
-            let dir = seg_dirs[i];
-            let (x1, y1) = to_screen(pts[0].x, pts[0].y, vp);
-            let (x2, y2) = to_screen(pts[1].x, pts[1].y, vp);
-
-            match dir {
-                SegDir::Right | SegDir::Left => {
-                    let (start_x, end_x) = if x2 >= x1 { (x1, x2) } else { (x2, x1) };
-                    for x in start_x..=end_x {
-                        if in_frame(x, y1, frame) {
-                            if let Some(cell) = frame.buffer_mut().cell_mut((x as u16, y1 as u16)) {
-                                cell.set_symbol("─").set_fg(Color::White);
-                            }
-                        }
-                    }
-                }
-                SegDir::Down | SegDir::Up => {
-                    let (start_y, end_y) = if y2 >= y1 { (y1, y2) } else { (y2, y1) };
-                    for y in start_y..=end_y {
-                        if in_frame(x1, y, frame) {
-                            if let Some(cell) = frame.buffer_mut().cell_mut((x1 as u16, y as u16)) {
-                                cell.set_symbol("│").set_fg(Color::White);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // Draw corners at bends
-        for (i, pts) in path.windows(3).enumerate() {
-            let (px, py) = to_screen(pts[1].x, pts[1].y, vp);
-            let incoming = seg_dirs[i];
-            let outgoing = seg_dirs[i + 1];
-
-            let glyph = match (incoming, outgoing) {
-                (SegDir::Left, SegDir::Down) | (SegDir::Up, SegDir::Right) => "┌",
-                (SegDir::Right, SegDir::Down) | (SegDir::Up, SegDir::Left) => "┐",
-                (SegDir::Down, SegDir::Right) | (SegDir::Left, SegDir::Up) => "└",
-                (SegDir::Down, SegDir::Left) | (SegDir::Right, SegDir::Up) => "┘",
-                (SegDir::Left, SegDir::Left) | (SegDir::Right, SegDir::Right) => "─",
-                (SegDir::Up, SegDir::Up) | (SegDir::Down, SegDir::Down) => "│",
-                _ => continue,
-            };
-
-            if in_frame(px, py, frame) {
-                if let Some(cell) = frame.buffer_mut().cell_mut((px as u16, py as u16)) {
-                    cell.set_symbol(glyph).set_fg(Color::White);
-                }
-            }
-        }
-
-        // Draw arrowheads
-        // Place at the offset point (second-to-last / second), not on the node
-        // border itself which gets overdrawn by node rendering.
-        let draw_arrowhead = |frame: &mut Frame, pt: Point, dir: SegDir| {
-            let (sx, sy) = to_screen(pt.x, pt.y, vp);
-            let ch = match dir {
-                SegDir::Right => "→",
-                SegDir::Left => "←",
-                SegDir::Down => "↓",
-                SegDir::Up => "↑",
-            };
-            if in_frame(sx, sy, frame) {
-                if let Some(cell) = frame.buffer_mut().cell_mut((sx as u16, sy as u16)) {
-                    cell.set_symbol(ch).set_fg(Color::Yellow);
-                }
-            }
-        };
-
-        let n = path.len();
-        match edge.dir {
-            ArrowDir::Forward => {
-                // arrowhead at end_off (index n-2), pointing in direction of last segment
-                if n >= 2 {
-                    let dir = *seg_dirs.last().unwrap();
-                    draw_arrowhead(frame, path[n - 2], dir);
-                }
-            }
-            ArrowDir::Backward => {
-                // arrowhead at start_off (index 1), pointing back toward source
-                if n >= 2 {
-                    let dir = match seg_dirs.first().unwrap() {
-                        SegDir::Right => SegDir::Left,
-                        SegDir::Left => SegDir::Right,
-                        SegDir::Down => SegDir::Up,
-                        SegDir::Up => SegDir::Down,
-                    };
-                    draw_arrowhead(frame, path[1], dir);
-                }
-            }
-            ArrowDir::Both => {
-                if n >= 2 {
-                    let dir = *seg_dirs.last().unwrap();
-                    draw_arrowhead(frame, path[n - 2], dir);
-                    let dir = match seg_dirs.first().unwrap() {
-                        SegDir::Right => SegDir::Left,
-                        SegDir::Left => SegDir::Right,
-                        SegDir::Down => SegDir::Up,
-                        SegDir::Up => SegDir::Down,
-                    };
-                    draw_arrowhead(frame, path[1], dir);
-                }
-            }
-        }
-    }
-}
-
-// ── Selection label overlay ───────────────────────────────────────────────────
-
-/// Render jump labels on top of every node that still matches `current`.
-///
-/// Colour scheme:
-///   - matched prefix  → dark gray fg, default bg  (dim: already typed)
-///   - remaining chars → black fg, bright yellow bg  (the "target" hint)
-///   - unmatched nodes → not rendered at all
-fn render_selection_labels(
-    frame: &mut Frame,
-    nodes: &[Node],
-    vp: &Viewport,
-    labels: &[(NodeId, String)],
-    current: &str,
-) {
-    use ratatui::{
-        style::Modifier,
-        text::{Line, Span},
-        widgets::Paragraph,
-    };
-
-    let fw = frame.area().width as isize;
-    let fh = frame.area().height as isize - 1;
-
-    for (id, label) in labels {
-        // Skip labels that can't match the current sequence any more.
-        if !label.starts_with(current) {
-            continue;
-        }
-
-        let node = match nodes.iter().find(|n| n.id == *id) {
-            Some(n) => n,
-            None => continue,
-        };
-
-        let (sx, sy) = to_screen(node.x, node.y, vp);
-        let (cx, cy, cw, ch) =
-            match clip_to_frame(sx, sy, node.width as isize, node.height as isize, fw, fh) {
-                Some(r) => r,
-                None => continue,
-            };
-
-        if cw < 1 || ch < 1 {
-            continue;
-        }
-
-        // Place the label one cell inside the top-left corner of the box.
-        // If the box is clipped on the left/top we skip — label wouldn't fit.
-        if cx != sx || cy != sy {
-            // Node is clipped at its origin; skip to avoid overlapping border.
-            continue;
-        }
-
-        // The label sits on row sy+1 (inside border), col sx+1.
-        let label_x = (sx + 1) as u16;
-        let label_y = (sy + 1) as u16;
-
-        if label_x >= frame.area().width || label_y >= frame.area().height {
-            continue;
-        }
-
-        let matched_len = current.len();
-        let matched = &label[..matched_len];
-        let rest = &label[matched_len..];
-
-        let matched_style = Style::default().fg(Color::DarkGray);
-        let hint_style = Style::default()
-            .fg(Color::Black)
-            .bg(Color::Yellow)
-            .add_modifier(Modifier::BOLD);
-
-        let spans = vec![
-            Span::styled(matched, matched_style),
-            Span::styled(rest, hint_style),
-        ];
-
-        let label_w = label.chars().count() as u16;
-        let available_w = frame.area().width.saturating_sub(label_x);
-        let render_w = label_w.min(available_w);
-        if render_w == 0 {
-            continue;
-        }
-
-        let area = Rect::new(label_x, label_y, render_w, 1);
-        frame.render_widget(Paragraph::new(Line::from(spans)), area);
-    }
-}
-
-// ── Edit popup ────────────────────────────────────────────────────────────────
-
-fn popup_area(area: Rect, percent_x: u16, rows: u16) -> Rect {
-    use ratatui::layout::{Constraint, Flex, Layout};
-    let vertical = Layout::vertical([Constraint::Length(rows)]).flex(Flex::Center);
-    let horizontal = Layout::horizontal([Constraint::Percentage(percent_x)]).flex(Flex::Center);
-    let [area] = vertical.areas(area);
-    let [area] = horizontal.areas(area);
-    area
-}
-
-fn render_popup(frame: &mut Frame, input: &str, cursor: usize) {
-    use ratatui::{layout::Position, widgets::Paragraph};
-
-    let area = popup_area(frame.area(), 50, 3);
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Yellow))
-        .title(" Edit label ");
-
-    let inner = block.inner(area);
-    frame.render_widget(Clear, area);
-    frame.render_widget(block, area);
-
-    let para = Paragraph::new(input);
-    frame.render_widget(para, inner);
-
-    // place the terminal cursor inside the popup at the right column
-    #[allow(clippy::cast_possible_truncation)]
-    frame.set_cursor_position(Position::new(inner.x + cursor as u16, inner.y));
-}
-
-// ── Hint bar ─────────────────────────────────────────────────────────────────
-
-fn render_hint(frame: &mut Frame, mode: &Mode) {
-    use ratatui::{layout::Rect, style::Style, widgets::Paragraph};
-    let area = frame.area();
-    let hint_area = Rect::new(0, area.height.saturating_sub(1), area.width, 1);
-    let text = match mode {
-        Mode::Normal => "  [normal]  hjkl: pan   enter: select node   q: quit",
-        Mode::SelectedBlock(_, BlockMode::Selected) => {
-            "  [selected]   hjkl: move ×1   HJKL: move ×5   r: resize   i: edit   enter: select node   esc: deselect   q: quit"
-        }
-        Mode::SelectedBlock(_, BlockMode::Resizing) => {
-            "  [resize]  hjkl: expand in direction   HJKL: shrink from direction   esc: back   q: quit"
-        }
-        Mode::SelectedBlock(_, BlockMode::Editing { .. }) => {
-            "  [editing]  enter: confirm   esc: cancel"
-        }
-        Mode::Selecting { .. } => "  [select node]  type label to jump   esc: cancel",
-    };
-    let hint = Paragraph::new(text).style(Style::default().fg(Color::DarkGray));
-    frame.render_widget(hint, hint_area);
-}
-
-// ── Cursor / input helpers ───────────────────────────────────────────────────
+// ── Cursor / input helpers ────────────────────────────────────────────────────
 
 fn clamp_cursor(input: &str, pos: usize) -> usize {
     pos.clamp(0, input.chars().count())
@@ -761,87 +111,82 @@ fn handle_key(
     vp: &mut Viewport,
     mode: &mut Mode,
     nodes: &mut Vec<Node>,
-    frame_w: isize,
-    frame_h: isize,
+    frame_w: i32,
+    frame_h: i32,
 ) {
     match mode {
-        Mode::SelectedBlock(id, BlockMode::Editing { input, cursor }) => {
-            match code {
-                KeyCode::Char(ch) => input_enter_char(input, cursor, ch),
-                KeyCode::Backspace => input_delete_char(input, cursor),
-                KeyCode::Left => *cursor = clamp_cursor(input, cursor.saturating_sub(1)),
-                KeyCode::Right => *cursor = clamp_cursor(input, cursor.saturating_add(1)),
-                KeyCode::Enter => {
-                    // commit the new label into the node
-                    let id = *id;
-                    let new_label = input.clone();
-                    if let Some(node) = nodes.iter_mut().find(|n| n.id == id) {
-                        node.label = new_label;
-                    }
-                    *mode = Mode::SelectedBlock(id, BlockMode::Selected);
+        Mode::SelectedBlock(id, BlockMode::Editing { input, cursor }) => match code {
+            KeyCode::Char(ch) => input_enter_char(input, cursor, ch),
+            KeyCode::Backspace => input_delete_char(input, cursor),
+            KeyCode::Left => *cursor = clamp_cursor(input, cursor.saturating_sub(1)),
+            KeyCode::Right => *cursor = clamp_cursor(input, cursor.saturating_add(1)),
+            KeyCode::Enter => {
+                let id = *id;
+                let new_label = input.clone();
+                if let Some(node) = nodes.iter_mut().find(|n| n.id == id) {
+                    node.label = new_label;
                 }
-                KeyCode::Esc => {
-                    let id = *id;
-                    *mode = Mode::SelectedBlock(id, BlockMode::Selected);
-                }
-                _ => {}
+                *mode = Mode::SelectedBlock(id, BlockMode::Selected);
             }
-        }
+            KeyCode::Esc => {
+                let id = *id;
+                *mode = Mode::SelectedBlock(id, BlockMode::Selected);
+            }
+            _ => {}
+        },
 
         Mode::SelectedBlock(id, BlockMode::Resizing) => {
             let id = *id;
             match code {
-                // expand: grow the box in the given direction
                 KeyCode::Char('h') => {
                     if let Some(node) = nodes.iter_mut().find(|n| n.id == id) {
-                        node.x -= 1;
-                        node.width += 1;
+                        node.rect.origin.x -= 1;
+                        node.rect.size.width += 1;
                     }
                 }
                 KeyCode::Char('l') => {
                     if let Some(node) = nodes.iter_mut().find(|n| n.id == id) {
-                        node.width += 1;
+                        node.rect.size.width += 1;
                     }
                 }
                 KeyCode::Char('k') => {
                     if let Some(node) = nodes.iter_mut().find(|n| n.id == id) {
-                        node.y -= 1;
-                        node.height += 1;
+                        node.rect.origin.y -= 1;
+                        node.rect.size.height += 1;
                     }
                 }
                 KeyCode::Char('j') => {
                     if let Some(node) = nodes.iter_mut().find(|n| n.id == id) {
-                        node.height += 1;
+                        node.rect.size.height += 1;
                     }
                 }
-                // shrink: contract the box from the given direction
                 KeyCode::Char('H') => {
                     if let Some(node) = nodes.iter_mut().find(|n| n.id == id) {
-                        if node.width > 3 {
-                            node.x += 1;
-                            node.width -= 1;
+                        if node.rect.size.width > 3 {
+                            node.rect.origin.x += 1;
+                            node.rect.size.width -= 1;
                         }
                     }
                 }
                 KeyCode::Char('L') => {
                     if let Some(node) = nodes.iter_mut().find(|n| n.id == id) {
-                        if node.width > 3 {
-                            node.width -= 1;
+                        if node.rect.size.width > 3 {
+                            node.rect.size.width -= 1;
                         }
                     }
                 }
                 KeyCode::Char('K') => {
                     if let Some(node) = nodes.iter_mut().find(|n| n.id == id) {
-                        if node.height > 3 {
-                            node.y += 1;
-                            node.height -= 1;
+                        if node.rect.size.height > 3 {
+                            node.rect.origin.y += 1;
+                            node.rect.size.height -= 1;
                         }
                     }
                 }
                 KeyCode::Char('J') => {
                     if let Some(node) = nodes.iter_mut().find(|n| n.id == id) {
-                        if node.height > 3 {
-                            node.height -= 1;
+                        if node.rect.size.height > 3 {
+                            node.rect.size.height -= 1;
                         }
                     }
                 }
@@ -849,45 +194,46 @@ fn handle_key(
                 _ => {}
             }
         }
+
         Mode::SelectedBlock(id, BlockMode::Selected) => match code {
             KeyCode::Char('h') => {
                 if let Some(node) = nodes.iter_mut().find(|n| n.id == *id) {
-                    node.x -= 1;
+                    node.rect.origin.x -= 1;
                 }
             }
             KeyCode::Char('H') => {
                 if let Some(node) = nodes.iter_mut().find(|n| n.id == *id) {
-                    node.x -= 5;
+                    node.rect.origin.x -= 5;
                 }
             }
             KeyCode::Char('l') => {
                 if let Some(node) = nodes.iter_mut().find(|n| n.id == *id) {
-                    node.x += 1;
+                    node.rect.origin.x += 1;
                 }
             }
             KeyCode::Char('L') => {
                 if let Some(node) = nodes.iter_mut().find(|n| n.id == *id) {
-                    node.x += 5;
+                    node.rect.origin.x += 5;
                 }
             }
             KeyCode::Char('k') => {
                 if let Some(node) = nodes.iter_mut().find(|n| n.id == *id) {
-                    node.y -= 1;
+                    node.rect.origin.y -= 1;
                 }
             }
             KeyCode::Char('K') => {
                 if let Some(node) = nodes.iter_mut().find(|n| n.id == *id) {
-                    node.y -= 5;
+                    node.rect.origin.y -= 5;
                 }
             }
             KeyCode::Char('j') => {
                 if let Some(node) = nodes.iter_mut().find(|n| n.id == *id) {
-                    node.y += 1;
+                    node.rect.origin.y += 1;
                 }
             }
             KeyCode::Char('J') => {
                 if let Some(node) = nodes.iter_mut().find(|n| n.id == *id) {
-                    node.y += 5;
+                    node.rect.origin.y += 5;
                 }
             }
             KeyCode::Char('r') => {
@@ -911,7 +257,7 @@ fn handle_key(
                 );
             }
             KeyCode::Enter => {
-                let labels = assign_labels(nodes, vp, frame_w, frame_h);
+                let labels = ui::assign_labels(nodes, vp, frame_w, frame_h);
                 let prev = Box::new(mode.clone());
                 *mode = Mode::Selecting {
                     labels,
@@ -922,13 +268,14 @@ fn handle_key(
             KeyCode::Esc => *mode = Mode::Normal,
             _ => {}
         },
+
         Mode::Normal => match code {
-            KeyCode::Char('h') => vp.x -= 3,
-            KeyCode::Char('l') => vp.x += 3,
-            KeyCode::Char('k') => vp.y += 3,
-            KeyCode::Char('j') => vp.y -= 3,
+            KeyCode::Char('h') => vp.center.x -= 3,
+            KeyCode::Char('l') => vp.center.x += 3,
+            KeyCode::Char('k') => vp.center.y += 3,
+            KeyCode::Char('j') => vp.center.y -= 3,
             KeyCode::Enter => {
-                let labels = assign_labels(nodes, vp, frame_w, frame_h);
+                let labels = ui::assign_labels(nodes, vp, frame_w, frame_h);
                 let prev = Box::new(mode.clone());
                 *mode = Mode::Selecting {
                     labels,
@@ -938,62 +285,38 @@ fn handle_key(
             }
             _ => {}
         },
+
         Mode::Selecting {
             labels,
             current,
             prev,
-        } => {
-            match code {
-                KeyCode::Esc => {
-                    *mode = *prev.clone();
-                }
-                KeyCode::Char(ch) => {
-                    current.push(ch);
-                    let current_str = current.clone();
-                    let prev_mode = *prev.clone();
-
-                    // Check for an exact match first.
-                    if let Some((matched_id, _)) =
-                        labels.iter().find(|(_, label)| *label == current_str)
-                    {
-                        let matched_id = *matched_id;
-                        *mode = Mode::SelectedBlock(matched_id, BlockMode::Selected);
-                        return;
-                    }
-
-                    // Check if any label still has `current` as a prefix.
-                    let any_partial = labels
-                        .iter()
-                        .any(|(_, label)| label.starts_with(current_str.as_str()));
-
-                    if !any_partial {
-                        // Dead end — no label can ever match. Return to prev.
-                        *mode = prev_mode;
-                    }
-                    // Otherwise stay in Selecting with the updated `current`.
-                }
-                _ => {}
+        } => match code {
+            KeyCode::Esc => {
+                *mode = *prev.clone();
             }
-        }
-    }
-}
+            KeyCode::Char(ch) => {
+                current.push(ch);
+                let current_str = current.clone();
+                let prev_mode = *prev.clone();
 
-// ── Top-level render ──────────────────────────────────────────────────────────
+                if let Some((matched_id, _)) =
+                    labels.iter().find(|(_, label)| *label == current_str)
+                {
+                    let matched_id = *matched_id;
+                    *mode = Mode::SelectedBlock(matched_id, BlockMode::Selected);
+                    return;
+                }
 
-fn render_map(frame: &mut Frame, nodes: &[Node], edges: &[Edge], vp: &Viewport, mode: &Mode) {
-    frame.render_widget(ratatui::widgets::Clear, frame.area());
-    render_connections(frame, nodes, edges, vp);
-    render_nodes(frame, nodes, vp, mode);
-    // Selection label overlay — drawn after nodes so labels appear on top.
-    if let Mode::Selecting {
-        labels, current, ..
-    } = mode
-    {
-        render_selection_labels(frame, nodes, vp, labels, current);
-    }
-    render_hint(frame, mode);
-    if let Mode::SelectedBlock(_, BlockMode::Editing { input, cursor }) = mode {
-        render_popup(frame, input, *cursor);
+                let any_partial = labels
+                    .iter()
+                    .any(|(_, label)| label.starts_with(current_str.as_str()));
+
+                if !any_partial {
+                    *mode = prev_mode;
+                }
+            }
+            _ => {}
+        },
     }
 }
 
@@ -1008,26 +331,31 @@ fn main() -> color_eyre::Result<()> {
     let backend = ratatui::backend::CrosstermBackend::new(stdout);
     let mut terminal = ratatui::Terminal::new(backend)?;
 
-    let (mut nodes, edges) = make_demo_graph();
-    let mut vp = Viewport { x: 0, y: 0 };
-    let mut mode = Mode::SelectedBlock(NodeId(0), BlockMode::Selected);
+    let (nodes, edges) = make_demo_graph();
+    let mut app = AppState {
+        nodes,
+        edges,
+        vp: Viewport {
+            center: SPoint::new(0, 0),
+        },
+        mode: Mode::SelectedBlock(NodeId(0), BlockMode::Selected),
+    };
 
     loop {
         terminal.draw(|frame| {
-            render_map(frame, &nodes, &edges, &vp, &mode);
+            ui::render_map(frame, &app.nodes, &app.edges, &app.vp, &app.mode);
         })?;
 
         if crossterm::event::poll(std::time::Duration::from_millis(50))? {
             if let crossterm::event::Event::Key(key) = crossterm::event::read()? {
-                // quit only when not typing inside an edit popup
-                let editing = matches!(mode, Mode::SelectedBlock(_, BlockMode::Editing { .. }));
+                let editing = matches!(app.mode, Mode::SelectedBlock(_, BlockMode::Editing { .. }));
                 if key.code == KeyCode::Char('q') && !editing {
                     break;
                 }
                 let size = terminal.size()?;
-                let fw = size.width as isize;
-                let fh = size.height as isize - 1; // reserve hint bar row
-                handle_key(key.code, &mut vp, &mut mode, &mut nodes, fw, fh);
+                let fw = size.width as i32;
+                let fh = size.height as i32 - 1;
+                handle_key(key.code, &mut app.vp, &mut app.mode, &mut app.nodes, fw, fh);
             }
         }
     }
