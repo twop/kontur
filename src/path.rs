@@ -582,16 +582,39 @@ mod tests {
             vec![(Dir::Right, 3), (Dir::Down, 2), (Dir::Left, 2)],
         );
         assert_eq!(res, expected);
+        let (start, runs) = res;
+        let segs: Vec<_> = PathIter::new(start, runs, ArrowDecorations::Forward).collect();
+        assert_eq!(
+            test_render(&segs, (3, 3)),
+            indoc! {"
+                xxxxx
+                x--+x
+                x  |x
+                x<-+x
+                xxxxx"}
+        );
     }
 
     #[test]
     fn c_shape_left_basic() {
-        let res = c_shape(SPoint::new(0, 0), SPoint::new(0, 2), Dir::Left, 2);
+        // start shifted to (2,0) so the leftward path stays on canvas
+        let res = c_shape(SPoint::new(2, 0), SPoint::new(2, 2), Dir::Left, 2);
         let expected = (
-            SPoint::new(0, 0),
+            SPoint::new(2, 0),
             vec![(Dir::Left, 3), (Dir::Down, 2), (Dir::Right, 2)],
         );
         assert_eq!(res, expected);
+        let (start, runs) = res;
+        let segs: Vec<_> = PathIter::new(start, runs, ArrowDecorations::Forward).collect();
+        assert_eq!(
+            test_render(&segs, (3, 3)),
+            indoc! {"
+                xxxxx
+                x+--x
+                x|  x
+                x+->x
+                xxxxx"}
+        );
     }
 
     #[test]
@@ -602,16 +625,41 @@ mod tests {
             vec![(Dir::Down, 4), (Dir::Right, 4), (Dir::Up, 3)],
         );
         assert_eq!(res, expected);
+        let (start, runs) = res;
+        let segs: Vec<_> = PathIter::new(start, runs, ArrowDecorations::Forward).collect();
+        assert_eq!(
+            test_render(&segs, (5, 4)),
+            indoc! {"
+                xxxxxxx
+                x|   ^x
+                x|   |x
+                x|   |x
+                x+---+x
+                xxxxxxx"}
+        );
     }
 
     #[test]
     fn c_shape_up_basic() {
-        let res = c_shape(SPoint::new(0, 0), SPoint::new(4, 0), Dir::Up, 3);
+        // start shifted to (0,3) so the upward path stays on canvas
+        let res = c_shape(SPoint::new(0, 3), SPoint::new(4, 3), Dir::Up, 3);
         let expected = (
-            SPoint::new(0, 0),
+            SPoint::new(0, 3),
             vec![(Dir::Up, 4), (Dir::Right, 4), (Dir::Down, 3)],
         );
         assert_eq!(res, expected);
+        let (start, runs) = res;
+        let segs: Vec<_> = PathIter::new(start, runs, ArrowDecorations::Forward).collect();
+        assert_eq!(
+            test_render(&segs, (5, 4)),
+            indoc! {"
+                xxxxxxx
+                x+---+x
+                x|   |x
+                x|   |x
+                x|   vx
+                xxxxxxx"}
+        );
     }
 
     #[test]
@@ -622,6 +670,19 @@ mod tests {
             vec![(Dir::Right, 2), (Dir::Down, 4), (Dir::Left, 1)],
         );
         assert_eq!(res, expected);
+        let (start, runs) = res;
+        let segs: Vec<_> = PathIter::new(start, runs, ArrowDecorations::Forward).collect();
+        assert_eq!(
+            test_render(&segs, (2, 5)),
+            indoc! {"
+                xxxx
+                x-+x
+                x |x
+                x |x
+                x |x
+                x<+x
+                xxxx"}
+        );
     }
 
     #[test]
@@ -632,24 +693,17 @@ mod tests {
             vec![(Dir::Right, 3), (Dir::Up, 2), (Dir::Left, 2)],
         );
         assert_eq!(res, expected);
-    }
-
-    #[test]
-    fn c_shape_right_render() {
-        // Render test retained from the original test suite
-        let (start, runs) = c_shape(SPoint::new(1, 0), SPoint::new(1, 2), Dir::Right, 2);
-        eprintln!("start={start:?} runs={runs:?}");
-        let segs: Vec<_> = PathIter::new(start, runs, ArrowDecorations::Backward).collect();
-        eprintln!("segs={segs:?}");
-        let got = test_render(&segs, (4, 3));
-        eprintln!("got:\n{got}");
-        let expected = indoc! {"
-            xxxxxx
-            x <-+x
-            x   |x
-            x --+x
-            xxxxxx"};
-        assert_eq!(got, expected);
+        let (start, runs) = res;
+        let segs: Vec<_> = PathIter::new(start, runs, ArrowDecorations::Forward).collect();
+        assert_eq!(
+            test_render(&segs, (3, 3)),
+            indoc! {"
+                xxxxx
+                x<-+x
+                x  |x
+                x--+x
+                xxxxx"}
+        );
     }
 
     // ── Backward arrowhead ────────────────────────────────────────────────────
