@@ -1,9 +1,5 @@
-use std::cmp::Ordering;
-use std::fs::DirBuilder;
-
 use crate::geometry::{Dir, SPoint, SRect};
 use crate::state::{ArrowDecorations, Edge, Node, Side};
-use indoc::indoc;
 
 // ── PathSegment ───────────────────────────────────────────────────────────────
 
@@ -70,10 +66,21 @@ impl PathSymbol {
     }
 }
 
+// ── Axis ──────────────────────────────────────────────────────────────────────
+
+/// The axis along which the stubs leave their connectors in an S-shaped route.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Axis {
+    /// Stubs exit horizontally (left or right); the middle jog is vertical.
+    Horizontal,
+    /// Stubs exit vertically (up or down); the middle jog is horizontal.
+    Vertical,
+}
+
 // ── Connection / offset helpers ───────────────────────────────────────────────
 
 /// Returns the border cell on `side` of `node` where a connection line starts.
-pub fn connection_point(node: &Node, side: Side) -> SPoint {
+fn connection_point(node: &Node, side: Side) -> SPoint {
     match side {
         Side::Right => node.rect.mid_right() + (1, 0),
         Side::Left => node.rect.mid_left() - (1, 0),
@@ -87,28 +94,73 @@ pub fn connection_point(node: &Node, side: Side) -> SPoint {
 // Each builder returns the starting point plus a Vec of (Dir, steps) runs.
 // Steps are the number of cells to advance in that direction.
 
-/// S-shaped route: two horizontal runs joined by a vertical jog in the middle.
-fn s_shape(start: SPoint, s_off: SPoint, end: SPoint, e_off: SPoint) -> (SPoint, Vec<(Dir, u32)>) {
-    let mid_x = s_off.x + (e_off.x - s_off.x) / 2;
-    let h1 = (mid_x - start.x).unsigned_abs();
-    let v = (e_off.y - s_off.y).unsigned_abs();
-    let h2 = (end.x - mid_x).unsigned_abs();
-    let h1_dir = if mid_x >= start.x {
-        Dir::Right
-    } else {
-        Dir::Left
-    };
-    let v_dir = if e_off.y >= s_off.y {
-        Dir::Down
-    } else {
-        Dir::Up
-    };
-    let h2_dir = if end.x >= mid_x {
-        Dir::Right
-    } else {
-        Dir::Left
-    };
-    (start, vec![(h1_dir, h1), (v_dir, v), (h2_dir, h2)])
+/// S-shaped route: two parallel stubs joined by a perpendicular jog in the middle.
+///
+/// * `start` — the inclusive start cell of the path (exit point of the first connector).
+/// * `dir`   — the axis along which both stubs leave their connectors:
+///   - [`Axis::Horizontal`]: stubs go left/right; the middle jog is vertical.
+///     The jog is placed at `mid_x = (start.x + end.x) / 2`.
+///   - [`Axis::Vertical`]: stubs go up/down; the middle jog is horizontal.
+///     The jog is placed at `mid_y = (start.y + end.y) / 2`.
+/// * `end`   — the inclusive end cell of the path (exit point of the second connector).
+///
+/// Zero-length runs are emitted as-is when `start` and `end` share the same
+/// x- (horizontal) or y- (vertical) coordinate.
+fn s_shape(start: SPoint, dir: Axis, end: SPoint) -> (SPoint, Vec<(Dir, u32)>) {
+    match dir {
+        Axis::Horizontal => {
+            // mid_x is the absolute x-coordinate of the vertical jog.
+            //
+            // PathIter emits `start` as the very first cell without advancing (inclusive
+            // start), so run1 needs `distance + 1` steps to land *on* mid_x — matching
+            // the `so + 1` convention used in c_shape.
+            //
+            // run2 is an exact delta: PathIter resumes advancing *from* the bend cell
+            // (which run1 already placed the corner on), so no adjustment needed.
+            //
+            // run3 also starts advancing from its bend cell (mid_x, end.y), so
+            // `distance` steps land exactly on end.x — no `+1`.
+            let mid_x = (start.x + end.x) / 2;
+            let run1_dir = if mid_x >= start.x {
+                Dir::Right
+            } else {
+                Dir::Left
+            };
+            let run2_dir = if end.y >= start.y { Dir::Down } else { Dir::Up };
+            let run3_dir = if end.x >= mid_x {
+                Dir::Right
+            } else {
+                Dir::Left
+            };
+            (
+                start,
+                vec![
+                    (run1_dir, (mid_x - start.x).unsigned_abs() + 1),
+                    (run2_dir, (end.y - start.y).unsigned_abs()),
+                    (run3_dir, (end.x - mid_x).unsigned_abs()),
+                ],
+            )
+        }
+        Axis::Vertical => {
+            // Same asymmetry: run1 needs +1, run3 does not.
+            let mid_y = (start.y + end.y) / 2;
+            let run1_dir = if mid_y >= start.y { Dir::Down } else { Dir::Up };
+            let run2_dir = if end.x >= start.x {
+                Dir::Right
+            } else {
+                Dir::Left
+            };
+            let run3_dir = if end.y >= mid_y { Dir::Down } else { Dir::Up };
+            (
+                start,
+                vec![
+                    (run1_dir, (mid_y - start.y).unsigned_abs() + 1),
+                    (run2_dir, (end.x - start.x).unsigned_abs()),
+                    (run3_dir, (end.y - mid_y).unsigned_abs()),
+                ],
+            )
+        }
+    }
 }
 
 /// C-shaped route: both stubs go in the same direction then wrap around.
@@ -337,7 +389,7 @@ impl Iterator for PathIter {
             return None;
         }
 
-        println!("here");
+        // println!("here");
         if self.prev_dir.is_none() {
             // Note that the very first step we don't progress the current position, because it is inclusive
             let dir = self.runs[0].0;
@@ -424,7 +476,7 @@ pub fn calculate_path(nodes: &[Node], edge: &Edge) -> (PathIter, SRect) {
         || (edge.from_side == Side::Left && edge.to_side == Side::Right)
     {
         if dx.abs() >= 6 {
-            s_shape(start, start, end, end)
+            s_shape(start, Axis::Horizontal, end)
         } else {
             corner(start, start, end, end)
         }
@@ -441,9 +493,9 @@ pub fn calculate_path(nodes: &[Node], edge: &Edge) -> (PathIter, SRect) {
 
 #[cfg(test)]
 mod tests {
-    use ratatui::layout::Size;
-
     use super::*;
+    use indoc::indoc;
+    use ratatui::layout::Size;
 
     // ── Test renderer ─────────────────────────────────────────────────────────
 
@@ -553,23 +605,147 @@ mod tests {
     }
 
     // ── S-shape ───────────────────────────────────────────────────────────────
+
+    // Horizontal stubs, end is right and below start.
+    // mid_x = (0+9)/2 = 4
+    // runs: Right 5 (+1 to land on col 4), Down 2, Right 5 (exact distance from col 4 to col 9)
     #[test]
-    fn s_shape_right_to_right() {
-        let (start, runs) = s_shape(
+    fn s_shape_horizontal_right_down() {
+        let res = s_shape(SPoint::new(0, 0), Axis::Horizontal, SPoint::new(9, 2));
+        let expected = (
             SPoint::new(0, 0),
-            SPoint::new(4, 0),
-            SPoint::new(9, 2),
-            SPoint::new(8, 2),
+            vec![(Dir::Right, 5), (Dir::Down, 2), (Dir::Right, 5)],
         );
+        assert_eq!(res, expected);
+        let (start, runs) = res;
         let segs: Vec<_> = PathIter::new(start, runs, ArrowDecorations::Forward).collect();
-        let got = test_render(&segs, (10, 3));
-        let expected = indoc! {"
-            xxxxxxxxxxxx
-            x-----+    x
-            x     |    x
-            x     +--> x
-            xxxxxxxxxxxx"};
-        assert_eq!(got, expected);
+        assert_eq!(
+            test_render(&segs, (10, 3)),
+            indoc! {"
+                xxxxxxxxxxxx
+                x----+     x
+                x    |     x
+                x    +---->x
+                xxxxxxxxxxxx"}
+        );
+    }
+
+    // Horizontal stubs, end is right and above start.
+    // mid_x = (0+9)/2 = 4
+    // runs: Right 5 (+1), Up 2, Right 5 (exact)
+    #[test]
+    fn s_shape_horizontal_right_up() {
+        let res = s_shape(SPoint::new(0, 2), Axis::Horizontal, SPoint::new(9, 0));
+        let expected = (
+            SPoint::new(0, 2),
+            vec![(Dir::Right, 5), (Dir::Up, 2), (Dir::Right, 5)],
+        );
+        assert_eq!(res, expected);
+        let (start, runs) = res;
+        let segs: Vec<_> = PathIter::new(start, runs, ArrowDecorations::Forward).collect();
+        assert_eq!(
+            test_render(&segs, (10, 3)),
+            indoc! {"
+                xxxxxxxxxxxx
+                x    +---->x
+                x    |     x
+                x----+     x
+                xxxxxxxxxxxx"}
+        );
+    }
+
+    // Horizontal stubs going leftward, end is left and below start.
+    // mid_x = (9+0)/2 = 4
+    // runs: Left 6 (+1 to land on col 4), Down 2, Left 4 (exact distance from col 4 to col 0)
+    #[test]
+    fn s_shape_horizontal_left_down() {
+        let res = s_shape(SPoint::new(9, 0), Axis::Horizontal, SPoint::new(0, 2));
+        let expected = (
+            SPoint::new(9, 0),
+            vec![(Dir::Left, 6), (Dir::Down, 2), (Dir::Left, 4)],
+        );
+        assert_eq!(res, expected);
+        let (start, runs) = res;
+        let segs: Vec<_> = PathIter::new(start, runs, ArrowDecorations::Forward).collect();
+        assert_eq!(
+            test_render(&segs, (10, 3)),
+            indoc! {"
+                xxxxxxxxxxxx
+                x    +-----x
+                x    |     x
+                x<---+     x
+                xxxxxxxxxxxx"}
+        );
+    }
+
+    // Horizontal stubs, degenerate: same x — mid_x == start.x == end.x.
+    // mid_x = (5+5)/2 = 5
+    // runs: Right 1 (+1, distance=0), Down 4, Right 0 (exact, distance=0)
+    #[test]
+    fn s_shape_horizontal_degenerate_same_x() {
+        let res = s_shape(SPoint::new(5, 0), Axis::Horizontal, SPoint::new(5, 4));
+        let expected = (
+            SPoint::new(5, 0),
+            vec![(Dir::Right, 1), (Dir::Down, 4), (Dir::Right, 0)],
+        );
+        assert_eq!(res, expected);
+    }
+
+    // Vertical stubs, end is right and below start.
+    // mid_y = (0+8)/2 = 4
+    // runs: Down 5 (+1 to land on row 4), Right 4, Down 4 (exact distance from row 4 to row 8)
+    #[test]
+    fn s_shape_vertical_down_right() {
+        let res = s_shape(SPoint::new(0, 0), Axis::Vertical, SPoint::new(4, 4));
+        let expected = (
+            SPoint::new(0, 0),
+            vec![(Dir::Down, 3), (Dir::Right, 4), (Dir::Down, 2)],
+        );
+        assert_eq!(res, expected);
+        let (start, runs) = res;
+        let segs: Vec<_> = PathIter::new(start, runs, ArrowDecorations::Forward).collect();
+        // println!("{}", test_render(&segs, (5, 5)));
+        assert_eq!(
+            test_render(&segs, (5, 5)),
+            indoc! {"
+                xxxxxxx
+                x|    x
+                x|    x
+                x+---+x
+                x    |x
+                x    vx
+                xxxxxxx"}
+        );
+    }
+
+    // Vertical stubs, end is left and below start.
+    // mid_y = (0+8)/2 = 4
+    // runs: Down 5 (+1), Left 4, Down 4 (exact)
+    #[test]
+    fn s_shape_vertical_down_left() {
+        let res = s_shape(SPoint::new(4, 0), Axis::Vertical, SPoint::new(0, 8));
+        let expected = (
+            SPoint::new(4, 0),
+            vec![(Dir::Down, 5), (Dir::Left, 4), (Dir::Down, 4)],
+        );
+        assert_eq!(res, expected);
+        let (start, runs) = res;
+        let segs: Vec<_> = PathIter::new(start, runs, ArrowDecorations::Forward).collect();
+        assert_eq!(
+            test_render(&segs, (5, 9)),
+            indoc! {"
+                xxxxxxx
+                x    |x
+                x    |x
+                x    |x
+                x    |x
+                x+---+x
+                x|    x
+                x|    x
+                x|    x
+                xv    x
+                xxxxxxx"}
+        );
     }
 
     // ── C-shape ───────────────────────────────────────────────────────────────
