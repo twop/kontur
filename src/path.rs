@@ -513,6 +513,30 @@ pub enum ConnectorShape {
     },
 }
 
+impl ConnectorShape {
+    /// Convert this shape into a `(start, runs)` pair by calling the
+    /// appropriate low-level shape builder.
+    ///
+    /// This is the single place that maps `ConnectorShape` variants to their
+    /// builder functions, keeping both [`calculate_path`] and tests DRY.
+    pub fn into_runs(self) -> (SPoint, Vec<(Dir, u32)>) {
+        match self {
+            ConnectorShape::CShape {
+                start,
+                end,
+                dir,
+                offset,
+            } => c_shape(start, end, dir, offset),
+            ConnectorShape::SShape { start, axis, end } => s_shape(start, axis, end),
+            ConnectorShape::Corner {
+                start,
+                end,
+                start_axis,
+            } => corner(start, end, start_axis),
+        }
+    }
+}
+
 // ── Path classification ───────────────────────────────────────────────────────
 
 /// Decide which [`ConnectorShape`] to use for a connection between `from` and
@@ -583,21 +607,7 @@ pub fn calculate_path(nodes: &[Node], edge: &Edge) -> Option<(PathIter, SRect)> 
     let to_node = nodes.iter().find(|n| n.id == edge.to_id)?;
 
     let shape = classify_shape(from_node, edge.from_side, to_node, edge.to_side);
-
-    let (start, runs) = match shape {
-        ConnectorShape::CShape {
-            start,
-            end,
-            dir,
-            offset,
-        } => c_shape(start, end, dir, offset),
-        ConnectorShape::SShape { start, axis, end } => s_shape(start, axis, end),
-        ConnectorShape::Corner {
-            start,
-            end,
-            start_axis,
-        } => corner(start, end, start_axis),
-    };
+    let (start, runs) = shape.into_runs();
 
     let bounds = bounds_from_runs(start, &runs);
     let iter = PathIter::new(start, runs, edge.dir);
@@ -632,6 +642,82 @@ mod tests {
         }
 
         let row_width = width as usize + 2;
+        let border = "x".repeat(row_width);
+        let rows: Vec<String> = grid
+            .iter()
+            .map(|row| {
+                let inner: String = row.iter().collect();
+                format!("x{inner}x")
+            })
+            .collect();
+        format!("{border}\n{}\n{border}", rows.join("\n"))
+    }
+
+    /// Render a [`ConnectorShape`] together with the two nodes it connects.
+    ///
+    /// The bounding box is the union of all node rects and the path bounds,
+    /// translated so that its top-left lands at (0, 0).  Nodes are drawn as
+    /// box-drawing borders with the node id digit in the centre cell; the
+    /// connector path is drawn on top (path symbols overwrite node borders
+    /// only where the stub exits the border cell, which is intentional).
+    ///
+    /// Nodes must be at least 3×3.  The node label is used as the id char;
+    /// `make_node` sets it to the stringified `id` argument.
+    fn render_scene(nodes: &[&Node], shape: ConnectorShape) -> String {
+        let (start, runs) = shape.into_runs();
+        let path_bounds = bounds_from_runs(start, &runs);
+
+        // Union of all node rects and the path bounds.
+        let scene_bounds = nodes.iter().fold(path_bounds, |acc, n| {
+            acc.extend_to(n.rect.top_left())
+                .extend_to(n.rect.bottom_right())
+        });
+        let ox = scene_bounds.origin.x;
+        let oy = scene_bounds.origin.y;
+        let w = scene_bounds.size.width as usize;
+        let h = scene_bounds.size.height as usize;
+
+        let mut grid = vec![vec![' '; w]; h];
+
+        // Draw nodes first (path symbols are painted on top afterwards).
+        for node in nodes {
+            let id_char = node.label.chars().next().unwrap_or('?');
+            let nx = (node.rect.origin.x - ox) as usize;
+            let ny = (node.rect.origin.y - oy) as usize;
+            let nw = node.rect.size.width as usize;
+            let nh = node.rect.size.height as usize;
+
+            for row in 0..nh {
+                for col in 0..nw {
+                    let ch = match (row, col) {
+                        // corners
+                        (r, c) if r == 0 && c == 0 => '+',
+                        (r, c) if r == 0 && c == nw - 1 => '+',
+                        (r, c) if r == nh - 1 && c == 0 => '+',
+                        (r, c) if r == nh - 1 && c == nw - 1 => '+',
+                        // top / bottom edges
+                        (r, _) if r == 0 || r == nh - 1 => '-',
+                        // left / right edges
+                        (_, c) if c == 0 || c == nw - 1 => '|',
+                        // centre of a 3×3 cell — id digit
+                        (r, c) if r == nh / 2 && c == nw / 2 => id_char,
+                        _ => ' ',
+                    };
+                    grid[ny + row][nx + col] = ch;
+                }
+            }
+        }
+
+        // Paint the path on top.
+        for (pt, sym) in PathIter::new(start, runs, ArrowDecorations::Forward) {
+            let px = (pt.x - ox) as usize;
+            let py = (pt.y - oy) as usize;
+            if pt.x >= ox && pt.y >= oy && px < w && py < h {
+                grid[py][px] = sym.to_ascii();
+            }
+        }
+
+        let row_width = w + 2;
         let border = "x".repeat(row_width);
         let rows: Vec<String> = grid
             .iter()
@@ -1083,238 +1169,354 @@ mod tests {
 
     // ── classify_shape ────────────────────────────────────────────────────────
     //
-    // Helper: build a minimal Node at the given rect for routing tests.
+    // Helper: build a node for routing tests.  `id` must be a single digit
+    // (0-9); it is stored as the label and rendered in the centre of the box.
+    // Width and height must be ≥ 3.
     fn make_node(id: usize, (x, y): (i32, i32), (w, h): (u16, u16)) -> Node {
+        assert!(w >= 3 && h >= 3, "nodes must be at least 3×3");
         Node {
             id: crate::state::NodeId(id),
             rect: SRect::new(x, y, w, h),
-            label: String::new(),
+            label: id.to_string(),
         }
     }
 
-    // Both nodes expose their Right side.
+    // Both nodes expose their Right side — A is above B, same column.
     //
-    //   ┌──────┐              ┌──────┐
-    //   │  A   │─────────────>│  B   │
-    //   └──────┘              └──────┘
+    // Layout (absolute coords, node size 3×3):
     //
-    // Connection points: A right-mid +1 col → start; B right-mid +1 col → end.
-    // Same side (Right) → CShape, dir=Right.
-    // A at (0,0,5,3): mid_right=(4,1), +1 → start=(5,1)
-    // B at (10,0,5,3): mid_right=(14,1), +1 → end=(15,1)
-    // offset = max(5,15) - 5 + 2 = 12
+    //   col: 0 1 2 3 4 5
+    //
+    //   row0  +-+
+    //   row1  |0|--+
+    //   row2  +-+  |
+    //   row3       |
+    //   row4  +-+  |
+    //   row5  |1|<-+
+    //   row6  +-+
+    //
+    // A=(0,0,3,3): mid_right=(2,1)+1 → start=(3,1)
+    // B=(0,4,3,3): mid_right=(2,5)+1 → end=(3,5)
+    // offset = max(3,3)-3+2 = 2
+    // c_shape(Right,offset=2): so=2, eo=2 → runs: Right 3, Down 4, Left 2
     #[test]
     fn classify_same_side_right() {
-        // ┌─────┐       ┌─────┐
-        // │  A  │→      │  B  │→
-        // └─────┘       └─────┘
-        //  both Right sides → CShape wrapping right
-        let a = make_node(0, (0, 0), (5, 3));
-        let b = make_node(1, (10, 0), (5, 3));
+        let a = make_node(0, (0, 0), (3, 3));
+        let b = make_node(1, (0, 4), (3, 3));
         let shape = classify_shape(&a, Side::Right, &b, Side::Right);
-        // start = (5,1), end = (14+1,1) = (15,1)
-        // offset = max(5,15) - 5 + 2 = 12
         assert_eq!(
             shape,
             ConnectorShape::CShape {
-                start: SPoint::new(5, 1),
-                end: SPoint::new(15, 1),
+                start: SPoint::new(3, 1),
+                end: SPoint::new(3, 5),
                 dir: Dir::Right,
-                offset: 12,
+                offset: 2,
             }
+        );
+        assert_eq!(
+            render_scene(&[&a, &b], shape),
+            indoc! {"
+                xxxxxxxxx
+                x+-+    x
+                x|0|--+ x
+                x+-+  | x
+                x     | x
+                x+-+  | x
+                x|1|<-+ x
+                x+-+    x
+                xxxxxxxxx"}
         );
     }
 
-    // Both nodes expose their Left side.
+    // Both nodes expose their Left side — A is above B, same column.
     //
-    //   ┌──────┐              ┌──────┐
-    //   │  A   │              │  B   │
-    //   └──────┘              └──────┘
-    //      ←                     ←
+    // Layout (absolute coords, cols shifted so path fits left of nodes):
     //
-    // A at (10,0,5,3): mid_left=(10,1), -1 → start=(9,1)
-    // B at (0,0,5,3):  mid_left=(0,1),  -1 → end=(-1,1)
-    // offset = start.x - min(start.x, end.x) + 2 = 9 - (-1) + 2 = 12
+    //   col: 0 1 2 3 4 5 6
+    //
+    //   row0      +-+
+    //   row1  +---|0|
+    //   row2  |   +-+
+    //   row3  |
+    //   row4  |   +-+
+    //   row5  +-->|1|
+    //   row6      +-+
+    //
+    // A=(4,0,3,3): mid_left=(4,1)-1 → start=(3,1)
+    // B=(4,4,3,3): mid_left=(4,5)-1 → end=(3,5)
+    // offset = 3-min(3,3)+2 = 2
+    // c_shape(Left,offset=2): delta=0, so=2, eo=2 → runs: Left 3, Down 4, Right 2
+    // path extends to x=0, scene origin shifts to include it → 7-wide canvas
     #[test]
     fn classify_same_side_left() {
-        //       ┌─────┐       ┌─────┐
-        //    →  │  B  │       │  A  │  ←
-        //       └─────┘       └─────┘
-        //  both Left sides → CShape wrapping left
-        let a = make_node(0, (10, 0), (5, 3));
-        let b = make_node(1, (0, 0), (5, 3));
+        let a = make_node(0, (4, 0), (3, 3));
+        let b = make_node(1, (4, 4), (3, 3));
         let shape = classify_shape(&a, Side::Left, &b, Side::Left);
         assert_eq!(
             shape,
             ConnectorShape::CShape {
-                start: SPoint::new(9, 1),
-                end: SPoint::new(-1, 1),
+                start: SPoint::new(3, 1),
+                end: SPoint::new(3, 5),
                 dir: Dir::Left,
-                offset: 12,
+                offset: 2,
             }
+        );
+        assert_eq!(
+            render_scene(&[&a, &b], shape),
+            indoc! {"
+                xxxxxxxxx
+                x    +-+x
+                x +--|0|x
+                x |  +-+x
+                x |     x
+                x |  +-+x
+                x +->|1|x
+                x    +-+x
+                xxxxxxxxx"}
         );
     }
 
-    // Right → Left, nodes far apart: S-shape.
+    // Right → Left, nodes far apart: S-shape (dx ≥ 6).
     //
-    //   ┌──────┐                        ┌──────┐
-    //   │  A   │→ ─────────────────── → │  B   │
-    //   └──────┘                        └──────┘
+    // Layout (absolute coords):
     //
-    // A at (0,0,5,3), B at (15,2,5,3).
-    // start=(5,1), end=(14,3).  dx=9 ≥ 6 → SShape Horizontal.
+    //   col: 0 1 2 3 4 5 6 7 8 9 10 11 12
+    //
+    //   row0  +-+                    +-+
+    //   row1  |0|---+           +---|1|
+    //   row2  +-+   |           |   +-+
+    //   row3         +-----------+
+    //
+    // A=(0,0,3,3): start=(3,1)
+    // B=(10,0,3,3): mid_left=(10,1)-1 → end=(9,1)... wait that's same row.
+    //
+    // Let me use B=(10,2,3,3) so they are on different rows:
+    // B mid_left=(10,3)-1 → end=(9,3), dx=|9-3|=6 ≥ 6 → SShape
+    // mid_x=(3+9)/2=6
+    // runs: Right (6-3)+1=4, Down 2, Right (9-6)=3
     #[test]
     fn classify_right_to_left_far_s_shape() {
-        //  ┌─────┐              ┌─────┐
-        //  │  A  │→ ----+  +-- →│  B  │
-        //  └─────┘      |  |    └─────┘
-        //               +--+
-        //    dx = 9 ≥ 6 → SShape(Horizontal)
-        let a = make_node(0, (0, 0), (5, 3));
-        let b = make_node(1, (15, 2), (5, 3));
+        let a = make_node(0, (0, 0), (3, 3));
+        let b = make_node(1, (10, 2), (3, 3));
         let shape = classify_shape(&a, Side::Right, &b, Side::Left);
         assert_eq!(
             shape,
             ConnectorShape::SShape {
-                start: SPoint::new(5, 1),
+                start: SPoint::new(3, 1),
                 axis: Axis::Horizontal,
-                end: SPoint::new(14, 3),
+                end: SPoint::new(9, 3),
             }
+        );
+        assert_eq!(
+            render_scene(&[&a, &b], shape),
+            indoc! {"
+                xxxxxxxxxxxxxxx
+                x+-+          x
+                x|0|---+      x
+                x+-+   |   +-+x
+                x      +-->|1|x
+                x          +-+x
+                xxxxxxxxxxxxxxx"}
         );
     }
 
-    // Right → Left, nodes close: corner (not enough room for S-jog).
+    // Right → Left, nodes close: L-corner (dx < 6).
     //
-    //   ┌────┐ ┌────┐
-    //   │ A  │→│ B  │
-    //   └────┘ └────┘
+    // The path exits A's Right side, jogs Left past A's left boundary, then
+    // turns Down and arrives at B's Left connection point.  Because the
+    // horizontal run passes through the column of both nodes the stub clips
+    // the top border of A on the way out and enters B's left border going
+    // down — this is expected for a short right-to-left corner route.
     //
-    // A at (0,0,3,3), B at (5,4,3,3).
-    // start=(3,1), end=(4,2).  dx=1 < 6 → Corner Horizontal.
+    //   col: 0 1 2 3 4 5 6
+    //
+    //   row0    +-+
+    //   row1  +----   ← path exits A right, turns left past A's left side
+    //   row2  | +-+
+    //   row3  |
+    //   row4  |
+    //   row5  | +-+
+    //   row6  v |1|   ← path ends at B's Left connection point going down
+    //   row7    +-+
+    //
+    // A=(2,0,3,3): start=(5,1)
+    // B=(2,5,3,3): mid_left=(2,6)-1 → end=(1,6), dx=|1-5|=4 < 6 → Corner(Horizontal)
+    // runs: Left (5-1)+1=5, Down (6-1)=5
     #[test]
     fn classify_right_to_left_close_corner() {
-        //  ┌───┐ ┌───┐
-        //  │ A │→│ B │
-        //  └───┘ └───┘
-        //    dx=1 < 6 → Corner(Horizontal)
-        let a = make_node(0, (0, 0), (3, 3));
-        let b = make_node(1, (5, 4), (3, 3));
+        let a = make_node(0, (2, 0), (3, 3));
+        let b = make_node(1, (2, 5), (3, 3));
         let shape = classify_shape(&a, Side::Right, &b, Side::Left);
-        // B at (5,4,3,3): mid_left=(5,5), -1 → end=(4,5)
+        assert_eq!(
+            shape,
+            ConnectorShape::Corner {
+                start: SPoint::new(5, 1),
+                end: SPoint::new(1, 6),
+                start_axis: Axis::Horizontal,
+            }
+        );
+        assert_eq!(
+            render_scene(&[&a, &b], shape),
+            indoc! {"
+                xxxxxxxx
+                x  +-+ x
+                x +----x
+                x |+-+ x
+                x |    x
+                x |    x
+                x |+-+ x
+                x v|1| x
+                x  +-+ x
+                xxxxxxxx"}
+        );
+    }
+
+    // Right → Bottom: mixed sides, L-corner, horizontal run first.
+    //
+    // The path exits A's Right side, goes right to align with B's bottom
+    // connection point column, then descends through B to reach the stub one
+    // cell below B's bottom border.  The vertical segment passes through B's
+    // interior — the centre column of the node box shows the path symbol
+    // overwriting the interior space.
+    //
+    //   col: 0 1 2 3 4 5 6 7
+    //
+    //   row0  +-+
+    //   row1  |0|--+
+    //   row2  +-+  |
+    //   row3       |
+    //   row4       |
+    //   row5    +-+|   ← vertical leg enters B from above
+    //   row6    |1||
+    //   row7    +-+|
+    //   row8       v   ← Bottom connection point, one below B's bottom border
+    //
+    // A=(0,0,3,3): start=(3,1)
+    // B=(4,5,3,3): mid_bottom=(5,7)+1 → end=(5,8)
+    // Corner(Horizontal): run1=Right (5-3)+1=3, run2=Down (8-1)=7
+    #[test]
+    fn classify_right_to_bottom_corner() {
+        let a = make_node(0, (0, 0), (3, 3));
+        let b = make_node(1, (4, 5), (3, 3));
+        let shape = classify_shape(&a, Side::Right, &b, Side::Bottom);
         assert_eq!(
             shape,
             ConnectorShape::Corner {
                 start: SPoint::new(3, 1),
-                end: SPoint::new(4, 5),
+                end: SPoint::new(5, 8),
                 start_axis: Axis::Horizontal,
             }
         );
-    }
-
-    // Right → Bottom: mixed sides → Corner, first run Horizontal.
-    //
-    //   ┌──────┐
-    //   │  A   │→ ────────┐
-    //   └──────┘           │
-    //                  ┌───▼──┐
-    //                  │  B   │
-    //                  └──────┘
-    //
-    // A at (0,0,5,3): start=(5,1).
-    // B at (8,5,5,3): mid_bottom=(10,7), +1 → end=(10,8).
-    // from_side=Right → start_axis=Horizontal → Corner.
-    #[test]
-    fn classify_right_to_bottom_corner() {
-        //  ┌─────┐
-        //  │  A  │→ ──────┐
-        //  └─────┘         │
-        //              ┌───▼───┐
-        //              │   B   │
-        //              └───────┘
-        //  Right→Bottom, mixed → Corner(Horizontal)
-        let a = make_node(0, (0, 0), (5, 3));
-        let b = make_node(1, (8, 5), (5, 3));
-        let shape = classify_shape(&a, Side::Right, &b, Side::Bottom);
-        // B mid_bottom = (8 + 5/2, 5+3-1) = (10, 7), +1 → (10, 8)
         assert_eq!(
-            shape,
-            ConnectorShape::Corner {
-                start: SPoint::new(5, 1),
-                end: SPoint::new(10, 8),
-                start_axis: Axis::Horizontal,
-            }
+            render_scene(&[&a, &b], shape),
+            indoc! {"
+                xxxxxxxxx
+                x+-+    x
+                x|0|--+ x
+                x+-+  | x
+                x     | x
+                x     | x
+                x    +|+x
+                x    |||x
+                x    +|+x
+                x     v x
+                xxxxxxxxx"}
         );
     }
 
-    // Bottom → Bottom: same side → CShape Down.
+    // Bottom → Bottom: same side, C-shape wrapping down.
     //
-    //   ┌──────┐   ┌──────┐
-    //   │  A   │   │  B   │
-    //   └──┬───┘   └──┬───┘
-    //      │           │
-    //      └───────────┘
+    // Layout (absolute coords):
     //
-    // A at (0,0,5,3): mid_bottom=(2,2), +1 → start=(2,3).
-    // B at (8,0,5,3): mid_bottom=(10,2), +1 → end=(10,3).
-    // offset = max(3,3) - 3 + 2 = 2.
+    //   col: 0 1 2 3 4 5 6 7
+    //
+    //   row0  +-+    +-+
+    //   row1  |0|    |1|
+    //   row2  +-+    +-+
+    //   row3   |      ^
+    //   row4   |      |
+    //   row5   +------+
+    //
+    // A=(0,0,3,3): mid_bottom=(1,2)+1 → start=(1,3)
+    // B=(5,0,3,3): mid_bottom=(6,2)+1 → end=(6,3)
+    // offset = max(3,3)-3+2 = 2
+    // c_shape(Down,offset=2): delta=0 → so=2, eo=2
+    // runs: Down 3, Right 5, Up 2
     #[test]
     fn classify_same_side_bottom() {
-        //  ┌─────┐    ┌─────┐
-        //  │  A  │    │  B  │
-        //  └──┬──┘    └──┬──┘
-        //     ↓           ↓
-        //     └───────────┘
-        //  both Bottom → CShape(Down)
-        let a = make_node(0, (0, 0), (5, 3));
-        let b = make_node(1, (8, 0), (5, 3));
+        let a = make_node(0, (0, 0), (3, 3));
+        let b = make_node(1, (5, 0), (3, 3));
         let shape = classify_shape(&a, Side::Bottom, &b, Side::Bottom);
-        // A mid_bottom = (0+5/2, 0+3-1) = (2,2), +1 → (2,3)
-        // B mid_bottom = (8+5/2, 0+3-1) = (10,2), +1 → (10,3)
-        // offset = max(3,3) - 3 + 2 = 2
         assert_eq!(
             shape,
             ConnectorShape::CShape {
-                start: SPoint::new(2, 3),
-                end: SPoint::new(10, 3),
+                start: SPoint::new(1, 3),
+                end: SPoint::new(6, 3),
                 dir: Dir::Down,
                 offset: 2,
             }
         );
+        assert_eq!(
+            render_scene(&[&a, &b], shape),
+            indoc! {"
+                xxxxxxxxxx
+                x+-+  +-+x
+                x|0|  |1|x
+                x+-+  +-+x
+                x |    ^ x
+                x |    | x
+                x +----+ x
+                x        x
+                xxxxxxxxxx"}
+        );
     }
 
-    // Top → Right: mixed sides → Corner, first run Vertical.
+    // Top → Right: mixed sides, L-corner, vertical run first.
     //
-    //                  ┌──────┐
-    //              ┌───►  B   │
-    //              │   └──────┘
-    //   ┌──────┐   │
-    //   │  A   │   │
-    //   └──▲───┘   │
-    //      │       │
-    //      └───────┘
+    // The path exits A's Top side, goes up to align with B's right connection
+    // row, then turns Right and travels to B's Right connection point.  The
+    // horizontal run crosses through B's interior — node B's middle row shows
+    // path dashes overwriting the id cell, while top and bottom borders remain
+    // intact above and below.
     //
-    // from_side=Top → start_axis=Vertical → Corner.
+    //   col: 0 1 2 3 4 5 6 7 8
+    //
+    //   row0      +-+
+    //   row1  +------>   ← horizontal leg exits B's right border at >
+    //   row2  |   +-+
+    //   row3  |
+    //   row4  +-+
+    //   row5  |0|
+    //   row6  +-+
+    //
+    // A=(0,4,3,3): mid_top=(1,4)-1 → start=(1,3)
+    // B=(4,0,3,3): mid_right=(6,1)+1 → end=(7,1)
+    // Corner(Vertical): run1=Up (3-1)+1=3, run2=Right (7-1)=6
     #[test]
     fn classify_top_to_right_corner() {
-        //           ┌─────┐
-        //       ┌──→│  B  │
-        //       │   └─────┘
-        //  ┌────┴┐
-        //  │  A  │
-        //  └─────┘
-        //  Top→Right, mixed → Corner(Vertical)
-        let a = make_node(0, (0, 4), (5, 3));
-        let b = make_node(1, (6, 0), (5, 3));
+        let a = make_node(0, (0, 4), (3, 3));
+        let b = make_node(1, (4, 0), (3, 3));
         let shape = classify_shape(&a, Side::Top, &b, Side::Right);
-        // A mid_top = (0+5/2, 4) = (2,4), -1 → (2,3)
-        // B mid_right = (6+5-1, 0+3/2) = (10,1), +1 → (11,1)
         assert_eq!(
             shape,
             ConnectorShape::Corner {
-                start: SPoint::new(2, 3),
-                end: SPoint::new(11, 1),
+                start: SPoint::new(1, 3),
+                end: SPoint::new(7, 1),
                 start_axis: Axis::Vertical,
             }
+        );
+        assert_eq!(
+            render_scene(&[&a, &b], shape),
+            indoc! {"
+                xxxxxxxxxx
+                x    +-+ x
+                x +----->x
+                x |  +-+ x
+                x |      x
+                x+-+     x
+                x|0|     x
+                x+-+     x
+                xxxxxxxxxx"}
         );
     }
 
