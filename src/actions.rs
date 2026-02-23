@@ -4,13 +4,7 @@
 // represented here.  The update loop translates raw key events into one of
 // these variants and then applies the resulting state change.
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum Dir {
-    Left,
-    Right,
-    Up,
-    Down,
-}
+use crate::geometry::Dir;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Action {

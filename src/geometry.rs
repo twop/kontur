@@ -1,5 +1,13 @@
 use ratatui::layout::{Rect, Size};
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Dir {
+    Left,
+    Right,
+    Up,
+    Down,
+}
+
 // ── SPoint ────────────────────────────────────────────────────────────────────
 
 /// A signed 2-D point in canvas or screen space.
@@ -60,6 +68,19 @@ impl std::ops::Add<(i32, i32)> for SPoint {
         Self {
             x: self.x + dx,
             y: self.y + dy,
+        }
+    }
+}
+
+impl std::ops::Add<Dir> for SPoint {
+    type Output = SPoint;
+
+    fn add(self, dir: Dir) -> Self::Output {
+        match dir {
+            Dir::Right => SPoint::new(self.x + 1, self.y),
+            Dir::Left => SPoint::new(self.x - 1, self.y),
+            Dir::Down => SPoint::new(self.x, self.y + 1),
+            Dir::Up => SPoint::new(self.x, self.y - 1),
         }
     }
 }
@@ -157,6 +178,23 @@ impl SRect {
         SPoint::new(
             self.origin.x + self.size.width as i32 / 2,
             self.origin.y + self.size.height as i32 / 2,
+        )
+    }
+
+    // ── Bounds extension ─────────────────────────────────────────────────────
+
+    /// Extend this rect to be the smallest rect that contains both `self` and
+    /// the given point `p`.  Returns a new `SRect`; `self` is unchanged.
+    pub fn extend_to(self, p: SPoint) -> Self {
+        let new_left = self.left().min(p.x);
+        let new_top = self.top().min(p.y);
+        let new_right = self.right().max(p.x);
+        let new_bottom = self.bottom().max(p.y);
+        SRect::new(
+            new_left,
+            new_top,
+            (new_right - new_left + 1) as u16,
+            (new_bottom - new_top + 1) as u16,
         )
     }
 

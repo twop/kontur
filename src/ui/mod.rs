@@ -7,8 +7,7 @@ use ratatui::{
 
 use crate::labels::LabelIter;
 use crate::path::{self};
-use crate::state::{ArrowDecorations, BlockMode, Edge, Mode, Node, NodeId, Viewport};
-use crate::{actions::Dir, geometry::SPoint};
+use crate::state::{BlockMode, Edge, Mode, Node, NodeId, Viewport};
 
 // ── Label pools ───────────────────────────────────────────────────────────────
 
@@ -139,119 +138,28 @@ fn render_nodes(frame: &mut Frame, nodes: &[Node], vp: &Viewport, mode: &Mode) {
 // ── Connection rendering ──────────────────────────────────────────────────────
 
 fn render_connections(frame: &mut Frame, nodes: &[Node], edges: &[Edge], vp: &Viewport) {
+    use crate::path::PathSymbol;
+
     for edge in edges {
-        let path = path::calculate_path(nodes, edge);
+        let (path_iter, _bounds) = path::calculate_path(nodes, edge);
 
-        let visible = path.iter().any(|p| {
-            let (sx, sy) = to_screen(p.x, p.y, vp);
-            in_frame(sx, sy, frame)
-        });
-        if !visible {
-            continue;
-        }
-
-        let seg_dirs: Vec<Dir> = path
-            .windows(2)
-            .map(|pts| path::seg_dir(pts[0], pts[1]))
-            .collect();
-
-        for (i, pts) in path.windows(2).enumerate() {
-            let dir = seg_dirs[i];
-            let (x1, y1) = to_screen(pts[0].x, pts[0].y, vp);
-            let (x2, y2) = to_screen(pts[1].x, pts[1].y, vp);
-
-            match dir {
-                Dir::Right | Dir::Left => {
-                    let (start_x, end_x) = if x2 >= x1 { (x1, x2) } else { (x2, x1) };
-                    for x in start_x..=end_x {
-                        if in_frame(x, y1, frame) {
-                            if let Some(cell) = frame.buffer_mut().cell_mut((x as u16, y1 as u16)) {
-                                cell.set_symbol("─").set_fg(Color::White);
-                            }
-                        }
-                    }
-                }
-                Dir::Down | Dir::Up => {
-                    let (start_y, end_y) = if y2 >= y1 { (y1, y2) } else { (y2, y1) };
-                    for y in start_y..=end_y {
-                        if in_frame(x1, y, frame) {
-                            if let Some(cell) = frame.buffer_mut().cell_mut((x1 as u16, y as u16)) {
-                                cell.set_symbol("│").set_fg(Color::White);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        for (i, pts) in path.windows(3).enumerate() {
-            let (px, py) = to_screen(pts[1].x, pts[1].y, vp);
-            let incoming = seg_dirs[i];
-            let outgoing = seg_dirs[i + 1];
-
-            let glyph = match (incoming, outgoing) {
-                (Dir::Left, Dir::Down) | (Dir::Up, Dir::Right) => "┌",
-                (Dir::Right, Dir::Down) | (Dir::Up, Dir::Left) => "┐",
-                (Dir::Down, Dir::Right) | (Dir::Left, Dir::Up) => "└",
-                (Dir::Down, Dir::Left) | (Dir::Right, Dir::Up) => "┘",
-                (Dir::Left, Dir::Left) | (Dir::Right, Dir::Right) => "─",
-                (Dir::Up, Dir::Up) | (Dir::Down, Dir::Down) => "│",
-                _ => continue,
-            };
-
-            if in_frame(px, py, frame) {
-                if let Some(cell) = frame.buffer_mut().cell_mut((px as u16, py as u16)) {
-                    cell.set_symbol(glyph).set_fg(Color::White);
-                }
-            }
-        }
-
-        let draw_arrowhead = |frame: &mut Frame, pt: SPoint, dir: Dir| {
+        for (pt, sym) in path_iter {
             let (sx, sy) = to_screen(pt.x, pt.y, vp);
-            let ch = match dir {
-                Dir::Right => "→",
-                Dir::Left => "←",
-                Dir::Down => "↓",
-                Dir::Up => "↑",
-            };
-            if in_frame(sx, sy, frame) {
-                if let Some(cell) = frame.buffer_mut().cell_mut((sx as u16, sy as u16)) {
-                    cell.set_symbol(ch).set_fg(Color::Yellow);
-                }
+            if !in_frame(sx, sy, frame) {
+                continue;
             }
-        };
 
-        let n = path.len();
-        match edge.dir {
-            ArrowDecorations::Forward => {
-                if n >= 2 {
-                    let dir = *seg_dirs.last().unwrap();
-                    draw_arrowhead(frame, path[n - 2], dir);
-                }
-            }
-            ArrowDecorations::Backward => {
-                if n >= 2 {
-                    let dir = match seg_dirs.first().unwrap() {
-                        Dir::Right => Dir::Left,
-                        Dir::Left => Dir::Right,
-                        Dir::Down => Dir::Up,
-                        Dir::Up => Dir::Down,
-                    };
-                    draw_arrowhead(frame, path[1], dir);
-                }
-            }
-            ArrowDecorations::Both => {
-                if n >= 2 {
-                    let dir = *seg_dirs.last().unwrap();
-                    draw_arrowhead(frame, path[n - 2], dir);
-                    let dir = match seg_dirs.first().unwrap() {
-                        Dir::Right => Dir::Left,
-                        Dir::Left => Dir::Right,
-                        Dir::Down => Dir::Up,
-                        Dir::Up => Dir::Down,
-                    };
-                    draw_arrowhead(frame, path[1], dir);
-                }
+            // Arrowheads are drawn in yellow; line segments in white.
+            let color = match sym {
+                PathSymbol::ArrowRight
+                | PathSymbol::ArrowLeft
+                | PathSymbol::ArrowDown
+                | PathSymbol::ArrowUp => Color::Yellow,
+                _ => Color::White,
+            };
+
+            if let Some(cell) = frame.buffer_mut().cell_mut((sx as u16, sy as u16)) {
+                cell.set_symbol(sym.to_symbol()).set_fg(color);
             }
         }
     }

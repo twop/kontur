@@ -614,6 +614,7 @@ version = "0.1.0"
 dependencies = [
  "color-eyre",
  "crossterm 0.28.1",
+ "indoc",
  "ratatui",
 ]
 
