@@ -1,3 +1,4 @@
+use std::cmp::Ordering;
 use std::fs::DirBuilder;
 
 use crate::geometry::{Dir, SPoint, SRect};
@@ -111,64 +112,87 @@ fn s_shape(start: SPoint, s_off: SPoint, end: SPoint, e_off: SPoint) -> (SPoint,
 }
 
 /// C-shaped route: both stubs go in the same direction then wrap around.
-fn c_shape(
-    start: SPoint,
-    s_off: SPoint,
-    end: SPoint,
-    e_off: SPoint,
-    from_side: Side,
-) -> (SPoint, Vec<(Dir, u32)>) {
-    match from_side {
-        Side::Right | Side::Left => {
-            let far_x = if from_side == Side::Right {
-                s_off.x.max(e_off.x)
-            } else {
-                s_off.x.min(e_off.x)
+///
+/// * `start` / `end` — the two inclusive endpoint cells of the path.
+/// * `dir`   — the direction both stubs point out from their respective nodes.
+/// * `offset` — how many cells to travel in `dir` before turning; this sets
+///              the position of the "far" column (horizontal dirs) or row
+///              (vertical dirs) at which the two stubs meet.
+///              note that, for offset=2, for Dir=Right from 0,0 the end point of
+///              the starting line will be 0,3 (2 for the connector and 1 for the line itself)
+fn c_shape(start: SPoint, end: SPoint, dir: Dir, offset: u16) -> (SPoint, Vec<(Dir, u32)>) {
+    let offset = offset as i32;
+    match dir {
+        Dir::Right => {
+            let (so, eo) = match start.x - end.x {
+                delta if delta < 0 => (offset - delta, offset),
+                delta => (offset + delta, offset),
             };
-            let h1_dir = if far_x >= start.x {
-                Dir::Right
-            } else {
-                Dir::Left
-            };
-            let v_dir = if e_off.y >= s_off.y {
-                Dir::Down
-            } else {
-                Dir::Up
-            };
-            let h2_dir = if end.x >= far_x {
-                Dir::Right
-            } else {
-                Dir::Left
-            };
+
             (
                 start,
-                vec![
-                    (h1_dir, (far_x - start.x).unsigned_abs()),
-                    (v_dir, (e_off.y - s_off.y).unsigned_abs()),
-                    (h2_dir, (end.x - far_x).unsigned_abs() - 1),
-                ],
+                Vec::from([
+                    (Dir::Right, so as u32 + 1),
+                    match start.y - end.y {
+                        delta if delta < 0 => (Dir::Down, delta.unsigned_abs()),
+                        delta => (Dir::Up, delta.unsigned_abs()),
+                    },
+                    (Dir::Left, eo as u32),
+                ]),
             )
         }
-        Side::Top | Side::Bottom => {
-            let far_y = if from_side == Side::Bottom {
-                s_off.y.max(e_off.y)
-            } else {
-                s_off.y.min(e_off.y)
+        Dir::Left => {
+            let (so, eo) = match start.x - end.x {
+                delta if delta > 0 => (offset + delta, offset),
+                delta => (offset, offset - delta),
             };
-            let v1_dir = if far_y >= start.y { Dir::Down } else { Dir::Up };
-            let h_dir = if e_off.x >= s_off.x {
-                Dir::Right
-            } else {
-                Dir::Left
-            };
-            let v2_dir = if end.y >= far_y { Dir::Down } else { Dir::Up };
+
             (
                 start,
-                vec![
-                    (v1_dir, (far_y - start.y).unsigned_abs()),
-                    (h_dir, (e_off.x - s_off.x).unsigned_abs()),
-                    (v2_dir, (end.y - far_y).unsigned_abs()),
-                ],
+                Vec::from([
+                    (Dir::Left, so as u32 + 1),
+                    match start.y - end.y {
+                        delta if delta < 0 => (Dir::Down, delta.unsigned_abs()),
+                        delta => (Dir::Up, delta.unsigned_abs()),
+                    },
+                    (Dir::Right, eo as u32),
+                ]),
+            )
+        }
+        Dir::Down => {
+            let (so, eo) = match start.y - end.y {
+                delta if delta < 0 => (offset - delta, offset),
+                delta => (offset + delta, offset),
+            };
+
+            (
+                start,
+                Vec::from([
+                    (Dir::Down, so as u32 + 1),
+                    match start.x - end.x {
+                        delta if delta < 0 => (Dir::Right, delta.unsigned_abs()),
+                        delta => (Dir::Left, delta.unsigned_abs()),
+                    },
+                    (Dir::Up, eo as u32),
+                ]),
+            )
+        }
+        Dir::Up => {
+            let (so, eo) = match start.y - end.y {
+                delta if delta > 0 => (offset + delta, offset),
+                delta => (offset, offset - delta),
+            };
+
+            (
+                start,
+                Vec::from([
+                    (Dir::Up, so as u32 + 1),
+                    match start.x - end.x {
+                        delta if delta < 0 => (Dir::Right, delta.unsigned_abs()),
+                        delta => (Dir::Left, delta.unsigned_abs()),
+                    },
+                    (Dir::Down, eo as u32),
+                ]),
             )
         }
     }
@@ -389,7 +413,13 @@ pub fn calculate_path(nodes: &[Node], edge: &Edge) -> (PathIter, SRect) {
     let dx = end.x - start.x;
 
     let (start, runs) = if edge.from_side == edge.to_side {
-        c_shape(start, start, end, end, edge.from_side)
+        let (dir, offset) = match edge.from_side {
+            Side::Right => (Dir::Right, (start.x.max(end.x) - start.x + 2) as u16),
+            Side::Left => (Dir::Left, (start.x - start.x.min(end.x) + 2) as u16),
+            Side::Bottom => (Dir::Down, (start.y.max(end.y) - start.y + 2) as u16),
+            Side::Top => (Dir::Up, (start.y - start.y.min(end.y) + 2) as u16),
+        };
+        c_shape(start, end, dir, offset)
     } else if (edge.from_side == Side::Right && edge.to_side == Side::Left)
         || (edge.from_side == Side::Left && edge.to_side == Side::Right)
     {
@@ -493,7 +523,14 @@ mod tests {
         .collect();
         let got = test_render(&segs, (6, 4));
         // Note: corner overwrites run at (5,0); arrow at tip
-        let _ = got; // expected values TBD when tests are revisited
+        let expected = indoc! {"
+            xxxxxxxx
+            x----+ x
+            x    | x
+            x    | x
+            x    v x
+            xxxxxxxx"};
+        assert_eq!(got, expected);
     }
 
     #[test]
@@ -506,7 +543,13 @@ mod tests {
         )
         .collect();
         let got = test_render(&segs, (6, 3));
-        let _ = got; // expected values TBD when tests are revisited
+        let expected = indoc! {"
+            xxxxxxxx
+            x|     x
+            x+---->x
+            x      x
+            xxxxxxxx"};
+        assert_eq!(got, expected);
     }
 
     // ── S-shape ───────────────────────────────────────────────────────────────
@@ -520,31 +563,92 @@ mod tests {
         );
         let segs: Vec<_> = PathIter::new(start, runs, ArrowDecorations::Forward).collect();
         let got = test_render(&segs, (10, 3));
-        let _ = got; // expected values TBD when tests are revisited
+        let expected = indoc! {"
+            xxxxxxxxxxxx
+            x-----+    x
+            x     |    x
+            x     +--> x
+            xxxxxxxxxxxx"};
+        assert_eq!(got, expected);
     }
 
     // ── C-shape ───────────────────────────────────────────────────────────────
-    #[test]
-    fn c_shape_right() {
-        let (start, runs) = c_shape(
-            SPoint::new(1, 0),
-            SPoint::new(3, 0),
-            SPoint::new(1, 2),
-            SPoint::new(3, 2),
-            Side::Right,
-        );
 
-        // println!("runs: {start:?} -> {runs:?}");
+    #[test]
+    fn c_shape_right_basic() {
+        let res = c_shape(SPoint::new(0, 0), SPoint::new(0, 2), Dir::Right, 2);
+        let expected = (
+            SPoint::new(0, 0),
+            vec![(Dir::Right, 3), (Dir::Down, 2), (Dir::Left, 2)],
+        );
+        assert_eq!(res, expected);
+    }
+
+    #[test]
+    fn c_shape_left_basic() {
+        let res = c_shape(SPoint::new(0, 0), SPoint::new(0, 2), Dir::Left, 2);
+        let expected = (
+            SPoint::new(0, 0),
+            vec![(Dir::Left, 3), (Dir::Down, 2), (Dir::Right, 2)],
+        );
+        assert_eq!(res, expected);
+    }
+
+    #[test]
+    fn c_shape_down_basic() {
+        let res = c_shape(SPoint::new(0, 0), SPoint::new(4, 0), Dir::Down, 3);
+        let expected = (
+            SPoint::new(0, 0),
+            vec![(Dir::Down, 4), (Dir::Right, 4), (Dir::Up, 3)],
+        );
+        assert_eq!(res, expected);
+    }
+
+    #[test]
+    fn c_shape_up_basic() {
+        let res = c_shape(SPoint::new(0, 0), SPoint::new(4, 0), Dir::Up, 3);
+        let expected = (
+            SPoint::new(0, 0),
+            vec![(Dir::Up, 4), (Dir::Right, 4), (Dir::Down, 3)],
+        );
+        assert_eq!(res, expected);
+    }
+
+    #[test]
+    fn c_shape_right_minimal_offset() {
+        let res = c_shape(SPoint::new(0, 0), SPoint::new(0, 4), Dir::Right, 1);
+        let expected = (
+            SPoint::new(0, 0),
+            vec![(Dir::Right, 2), (Dir::Down, 4), (Dir::Left, 1)],
+        );
+        assert_eq!(res, expected);
+    }
+
+    #[test]
+    fn c_shape_right_end_above_start() {
+        let res = c_shape(SPoint::new(0, 2), SPoint::new(0, 0), Dir::Right, 2);
+        let expected = (
+            SPoint::new(0, 2),
+            vec![(Dir::Right, 3), (Dir::Up, 2), (Dir::Left, 2)],
+        );
+        assert_eq!(res, expected);
+    }
+
+    #[test]
+    fn c_shape_right_render() {
+        // Render test retained from the original test suite
+        let (start, runs) = c_shape(SPoint::new(1, 0), SPoint::new(1, 2), Dir::Right, 2);
+        eprintln!("start={start:?} runs={runs:?}");
         let segs: Vec<_> = PathIter::new(start, runs, ArrowDecorations::Backward).collect();
-        // println!("segs: {segs:?}");
+        eprintln!("segs={segs:?}");
         let got = test_render(&segs, (4, 3));
+        eprintln!("got:\n{got}");
         let expected = indoc! {"
             xxxxxx
-            x <+ x
-            x  | x
-            x -+ x
+            x <-+x
+            x   |x
+            x --+x
             xxxxxx"};
-
         assert_eq!(got, expected);
     }
 
