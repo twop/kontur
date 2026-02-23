@@ -357,12 +357,21 @@ fn reverse_dir(dir: Dir) -> Dir {
 fn bounds_from_runs(start: SPoint, runs: &[(Dir, u32)]) -> SRect {
     let mut bounds = SRect::new(start.x, start.y, 1, 1);
     let mut pos = start;
-    for &(dir, steps) in runs {
+    for (i, &(dir, steps)) in runs.iter().enumerate() {
+        // Run 0 has an inclusive start (PathIter emits `start` without
+        // advancing), so its net displacement is `steps - 1`.
+        // Subsequent runs each start at the previous corner cell and advance
+        // `steps` more positions, so their displacement is `steps`.
+        let dist = if i == 0 {
+            steps as i32 - 1
+        } else {
+            steps as i32
+        };
         pos = match dir {
-            Dir::Right => SPoint::new(pos.x + steps as i32, pos.y),
-            Dir::Left => SPoint::new(pos.x - steps as i32, pos.y),
-            Dir::Down => SPoint::new(pos.x, pos.y + steps as i32),
-            Dir::Up => SPoint::new(pos.x, pos.y - steps as i32),
+            Dir::Right => SPoint::new(pos.x + dist, pos.y),
+            Dir::Left => SPoint::new(pos.x - dist, pos.y),
+            Dir::Down => SPoint::new(pos.x, pos.y + dist),
+            Dir::Up => SPoint::new(pos.x, pos.y - dist),
         };
         bounds = bounds.extend_to(pos);
     }
@@ -511,9 +520,80 @@ pub enum ConnectorShape {
         end: SPoint,
         start_axis: Axis,
     },
+    /// A composite of multiple primitive shapes chained end-to-end.
+    ///
+    /// The end point of each shape must equal the start point of the next.
+    /// When converted to runs the shared junction point is emitted only once:
+    /// the inclusive start of each subsequent shape is dropped by decrementing
+    /// its first run's step count by one.
+    Composite(Vec<ConnectorShape>),
+}
+
+/// Walk a `(start, runs)` pair and return the final position reached.
+///
+/// PathIter uses an inclusive start: the very first cell of run 0 is `start`
+/// itself (no advance), so run 0 displaces by `steps - 1`.  Each subsequent
+/// run begins at the corner emitted by the previous run and advances `steps`
+/// more cells, so runs 1+ displace by `steps`.
+fn end_point_from_runs(start: SPoint, runs: &[(Dir, u32)]) -> SPoint {
+    let mut pos = start;
+    for (i, &(dir, steps)) in runs.iter().enumerate() {
+        let dist = if i == 0 {
+            steps as i32 - 1
+        } else {
+            steps as i32
+        };
+        pos = match dir {
+            Dir::Right => SPoint::new(pos.x + dist, pos.y),
+            Dir::Left => SPoint::new(pos.x - dist, pos.y),
+            Dir::Down => SPoint::new(pos.x, pos.y + dist),
+            Dir::Up => SPoint::new(pos.x, pos.y - dist),
+        };
+    }
+    pos
 }
 
 impl ConnectorShape {
+    /// Return the inclusive start point of this shape.
+    pub fn start(&self) -> SPoint {
+        match self {
+            ConnectorShape::CShape { start, .. } => *start,
+            ConnectorShape::SShape { start, .. } => *start,
+            ConnectorShape::Corner { start, .. } => *start,
+            ConnectorShape::Composite(shapes) => shapes[0].start(),
+        }
+    }
+
+    /// Return the inclusive end point of this shape.
+    pub fn end(&self) -> SPoint {
+        match self {
+            ConnectorShape::Composite(shapes) => shapes.last().unwrap().end(),
+            _ => {
+                let (start, runs) = self.clone_runs();
+                end_point_from_runs(start, &runs)
+            }
+        }
+    }
+
+    /// Like `into_runs` but borrows `self` (used internally for `end()`).
+    fn clone_runs(&self) -> (SPoint, Vec<(Dir, u32)>) {
+        match self {
+            ConnectorShape::CShape {
+                start,
+                end,
+                dir,
+                offset,
+            } => c_shape(*start, *end, *dir, *offset),
+            ConnectorShape::SShape { start, axis, end } => s_shape(*start, *axis, *end),
+            ConnectorShape::Corner {
+                start,
+                end,
+                start_axis,
+            } => corner(*start, *end, *start_axis),
+            ConnectorShape::Composite(_) => unreachable!("handled above"),
+        }
+    }
+
     /// Convert this shape into a `(start, runs)` pair by calling the
     /// appropriate low-level shape builder.
     ///
@@ -533,6 +613,41 @@ impl ConnectorShape {
                 end,
                 start_axis,
             } => corner(start, end, start_axis),
+            ConnectorShape::Composite(shapes) => {
+                assert!(
+                    !shapes.is_empty(),
+                    "Composite must contain at least one shape"
+                );
+
+                let overall_start = shapes[0].start();
+                let mut merged: Vec<(Dir, u32)> = Vec::new();
+
+                for (i, shape) in shapes.into_iter().enumerate() {
+                    let (shape_start, mut runs) = shape.into_runs();
+
+                    if i == 0 {
+                        merged.extend(runs);
+                    } else {
+                        // The start of this shape is the same cell as the end of
+                        // the previous shape (PathIter uses inclusive starts), so
+                        // we must not emit it again.  Decrement the first run's
+                        // step count to skip that shared junction cell.
+                        debug_assert!(!runs.is_empty(), "Composite sub-shape {i} produced no runs");
+                        debug_assert_eq!(
+                            {
+                                // end of the previous merged path so far
+                                end_point_from_runs(overall_start, &merged)
+                            },
+                            shape_start,
+                            "Composite shape {i} start does not align with the end of the previous shape"
+                        );
+                        runs[0].1 -= 1;
+                        merged.extend(runs);
+                    }
+                }
+
+                (overall_start, merged)
+            }
         }
     }
 }
@@ -620,28 +735,33 @@ pub fn calculate_path(nodes: &[Node], edge: &Edge) -> Option<(PathIter, SRect)> 
 mod tests {
     use super::*;
     use indoc::indoc;
-    use ratatui::layout::Size;
 
     // ── Test renderer ─────────────────────────────────────────────────────────
 
-    /// Render a list of `(SPoint, PathSymbol)` pairs onto a `width × height`
-    /// grid, producing a multiline string where each row is wrapped in `x`
-    /// delimiters for visibility.  Cells not covered by a symbol are spaces.
+    /// Render `(start, runs)` into a grid string.
     ///
-    /// Points outside the canvas are silently ignored.
-    fn test_render(symbols: &[(SPoint, PathSymbol)], size: impl Into<Size>) -> String {
-        let Size { width, height } = size.into();
-        let mut grid = vec![vec![' '; width as usize]; height as usize];
+    /// The bounding box is computed from the runs themselves and the grid is
+    /// automatically sized and translated so the top-left of the path lands at
+    /// (0, 0).  Each row is wrapped in `x` delimiters; the whole block is
+    /// bordered top and bottom with `x` rows.
+    fn render_path_arrow(start: SPoint, runs: Vec<(Dir, u32)>, arrow: ArrowDecorations) -> String {
+        let bounds = bounds_from_runs(start, &runs);
+        let ox = bounds.origin.x;
+        let oy = bounds.origin.y;
+        let w = bounds.size.width as usize;
+        let h = bounds.size.height as usize;
 
-        for (pt, seg) in symbols {
-            let x = pt.x;
-            let y = pt.y;
-            if pt.x >= 0 && pt.y >= 0 && x < width as i32 && y < height as i32 {
-                grid[y as usize][x as usize] = seg.to_ascii();
+        let mut grid = vec![vec![' '; w]; h];
+
+        for (pt, sym) in PathIter::new(start, runs, arrow) {
+            let px = (pt.x - ox) as usize;
+            let py = (pt.y - oy) as usize;
+            if pt.x >= ox && pt.y >= oy && px < w && py < h {
+                grid[py][px] = sym.to_ascii();
             }
         }
 
-        let row_width = width as usize + 2;
+        let row_width = w + 2;
         let border = "x".repeat(row_width);
         let rows: Vec<String> = grid
             .iter()
@@ -651,6 +771,10 @@ mod tests {
             })
             .collect();
         format!("{border}\n{}\n{border}", rows.join("\n"))
+    }
+
+    fn render_path(start: SPoint, runs: Vec<(Dir, u32)>) -> String {
+        render_path_arrow(start, runs, ArrowDecorations::Forward)
     }
 
     /// Render a [`ConnectorShape`] together with the two nodes it connects.
@@ -732,77 +856,54 @@ mod tests {
     // ── Straight lines ────────────────────────────────────────────────────────
     #[test]
     fn horizontal_line() {
-        let segs: Vec<_> = PathIter::new(
-            SPoint::new(0, 0),
-            vec![(Dir::Right, 4)],
-            ArrowDecorations::Forward,
-        )
-        .collect();
-        let got = test_render(&segs, (5, 1));
-        let expected = indoc! {"
-            xxxxxxx
-            x---> x
-            xxxxxxx"};
-        assert_eq!(got, expected);
+        assert_eq!(
+            render_path(SPoint::new(0, 0), vec![(Dir::Right, 4)]),
+            indoc! {"
+                xxxxxx
+                x--->x
+                xxxxxx"}
+        );
     }
 
     #[test]
     fn vertical_line() {
-        let segs: Vec<_> = PathIter::new(
-            SPoint::new(0, 0),
-            vec![(Dir::Down, 3)],
-            ArrowDecorations::Forward,
-        )
-        .collect();
-        let got = test_render(&segs, (1, 4));
-        let expected = indoc! {"
-            xxx
-            x|x
-            x|x
-            xvx
-            x x
-            xxx"};
-        assert_eq!(got, expected);
+        assert_eq!(
+            render_path(SPoint::new(0, 0), vec![(Dir::Down, 3)]),
+            indoc! {"
+                xxx
+                x|x
+                x|x
+                xvx
+                xxx"}
+        );
     }
 
     #[test]
     fn corner_right_then_down() {
         // Right 5 then Down 3: bend at (5,0)
-        let segs: Vec<_> = PathIter::new(
-            SPoint::new(0, 0),
-            vec![(Dir::Right, 5), (Dir::Down, 3)],
-            ArrowDecorations::Forward,
-        )
-        .collect();
-        let got = test_render(&segs, (6, 4));
-        // Note: corner overwrites run at (5,0); arrow at tip
-        let expected = indoc! {"
-            xxxxxxxx
-            x----+ x
-            x    | x
-            x    | x
-            x    v x
-            xxxxxxxx"};
-        assert_eq!(got, expected);
+        assert_eq!(
+            render_path(SPoint::new(0, 0), vec![(Dir::Right, 5), (Dir::Down, 3)]),
+            indoc! {"
+                xxxxxxx
+                x----+x
+                x    |x
+                x    |x
+                x    vx
+                xxxxxxx"}
+        );
     }
 
     #[test]
     fn corner_down_then_right() {
         // Down 2 then Right 5: bend at (0,2)
-        let segs: Vec<_> = PathIter::new(
-            SPoint::new(0, 0),
-            vec![(Dir::Down, 2), (Dir::Right, 5)],
-            ArrowDecorations::Forward,
-        )
-        .collect();
-        let got = test_render(&segs, (6, 3));
-        let expected = indoc! {"
-            xxxxxxxx
-            x|     x
-            x+---->x
-            x      x
-            xxxxxxxx"};
-        assert_eq!(got, expected);
+        assert_eq!(
+            render_path(SPoint::new(0, 0), vec![(Dir::Down, 2), (Dir::Right, 5)]),
+            indoc! {"
+                xxxxxxxx
+                x|     x
+                x+---->x
+                xxxxxxxx"}
+        );
     }
 
     // ── Corner (function) ─────────────────────────────────────────────────────
@@ -815,9 +916,8 @@ mod tests {
         let expected = (SPoint::new(0, 0), vec![(Dir::Right, 6), (Dir::Down, 3)]);
         assert_eq!(res, expected);
         let (start, runs) = res;
-        let segs: Vec<_> = PathIter::new(start, runs, ArrowDecorations::Forward).collect();
         assert_eq!(
-            test_render(&segs, (6, 4)),
+            render_path(start, runs),
             indoc! {"
                 xxxxxxxx
                 x-----+x
@@ -836,9 +936,8 @@ mod tests {
         let expected = (SPoint::new(4, 2), vec![(Dir::Left, 5), (Dir::Up, 2)]);
         assert_eq!(res, expected);
         let (start, runs) = res;
-        let segs: Vec<_> = PathIter::new(start, runs, ArrowDecorations::Forward).collect();
         assert_eq!(
-            test_render(&segs, (5, 3)),
+            render_path(start, runs),
             indoc! {"
                 xxxxxxx
                 x^    x
@@ -856,9 +955,8 @@ mod tests {
         let expected = (SPoint::new(0, 0), vec![(Dir::Down, 4), (Dir::Right, 5)]);
         assert_eq!(res, expected);
         let (start, runs) = res;
-        let segs: Vec<_> = PathIter::new(start, runs, ArrowDecorations::Forward).collect();
         assert_eq!(
-            test_render(&segs, (6, 4)),
+            render_path(start, runs),
             indoc! {"
                 xxxxxxxx
                 x|     x
@@ -877,9 +975,8 @@ mod tests {
         let expected = (SPoint::new(4, 2), vec![(Dir::Up, 3), (Dir::Left, 4)]);
         assert_eq!(res, expected);
         let (start, runs) = res;
-        let segs: Vec<_> = PathIter::new(start, runs, ArrowDecorations::Forward).collect();
         assert_eq!(
-            test_render(&segs, (5, 3)),
+            render_path(start, runs),
             indoc! {"
                 xxxxxxx
                 x<---+x
@@ -903,9 +1000,8 @@ mod tests {
         );
         assert_eq!(res, expected);
         let (start, runs) = res;
-        let segs: Vec<_> = PathIter::new(start, runs, ArrowDecorations::Forward).collect();
         assert_eq!(
-            test_render(&segs, (10, 3)),
+            render_path(start, runs),
             indoc! {"
                 xxxxxxxxxxxx
                 x----+     x
@@ -927,9 +1023,8 @@ mod tests {
         );
         assert_eq!(res, expected);
         let (start, runs) = res;
-        let segs: Vec<_> = PathIter::new(start, runs, ArrowDecorations::Forward).collect();
         assert_eq!(
-            test_render(&segs, (10, 3)),
+            render_path(start, runs),
             indoc! {"
                 xxxxxxxxxxxx
                 x    +---->x
@@ -951,9 +1046,8 @@ mod tests {
         );
         assert_eq!(res, expected);
         let (start, runs) = res;
-        let segs: Vec<_> = PathIter::new(start, runs, ArrowDecorations::Forward).collect();
         assert_eq!(
-            test_render(&segs, (10, 3)),
+            render_path(start, runs),
             indoc! {"
                 xxxxxxxxxxxx
                 x    +-----x
@@ -977,8 +1071,8 @@ mod tests {
     }
 
     // Vertical stubs, end is right and below start.
-    // mid_y = (0+8)/2 = 4
-    // runs: Down 5 (+1 to land on row 4), Right 4, Down 4 (exact distance from row 4 to row 8)
+    // mid_y = (0+4)/2 = 2
+    // runs: Down 3 (+1 to land on row 2), Right 4, Down 2 (exact distance from row 2 to row 4)
     #[test]
     fn s_shape_vertical_down_right() {
         let res = s_shape(SPoint::new(0, 0), Axis::Vertical, SPoint::new(4, 4));
@@ -988,10 +1082,8 @@ mod tests {
         );
         assert_eq!(res, expected);
         let (start, runs) = res;
-        let segs: Vec<_> = PathIter::new(start, runs, ArrowDecorations::Forward).collect();
-        // println!("{}", test_render(&segs, (5, 5)));
         assert_eq!(
-            test_render(&segs, (5, 5)),
+            render_path(start, runs),
             indoc! {"
                 xxxxxxx
                 x|    x
@@ -1015,9 +1107,8 @@ mod tests {
         );
         assert_eq!(res, expected);
         let (start, runs) = res;
-        let segs: Vec<_> = PathIter::new(start, runs, ArrowDecorations::Forward).collect();
         assert_eq!(
-            test_render(&segs, (5, 9)),
+            render_path(start, runs),
             indoc! {"
                 xxxxxxx
                 x    |x
@@ -1044,9 +1135,8 @@ mod tests {
         );
         assert_eq!(res, expected);
         let (start, runs) = res;
-        let segs: Vec<_> = PathIter::new(start, runs, ArrowDecorations::Forward).collect();
         assert_eq!(
-            test_render(&segs, (3, 3)),
+            render_path(start, runs),
             indoc! {"
                 xxxxx
                 x--+x
@@ -1066,9 +1156,8 @@ mod tests {
         );
         assert_eq!(res, expected);
         let (start, runs) = res;
-        let segs: Vec<_> = PathIter::new(start, runs, ArrowDecorations::Forward).collect();
         assert_eq!(
-            test_render(&segs, (3, 3)),
+            render_path(start, runs),
             indoc! {"
                 xxxxx
                 x+--x
@@ -1087,9 +1176,8 @@ mod tests {
         );
         assert_eq!(res, expected);
         let (start, runs) = res;
-        let segs: Vec<_> = PathIter::new(start, runs, ArrowDecorations::Forward).collect();
         assert_eq!(
-            test_render(&segs, (5, 4)),
+            render_path(start, runs),
             indoc! {"
                 xxxxxxx
                 x|   ^x
@@ -1110,9 +1198,8 @@ mod tests {
         );
         assert_eq!(res, expected);
         let (start, runs) = res;
-        let segs: Vec<_> = PathIter::new(start, runs, ArrowDecorations::Forward).collect();
         assert_eq!(
-            test_render(&segs, (5, 4)),
+            render_path(start, runs),
             indoc! {"
                 xxxxxxx
                 x+---+x
@@ -1132,9 +1219,8 @@ mod tests {
         );
         assert_eq!(res, expected);
         let (start, runs) = res;
-        let segs: Vec<_> = PathIter::new(start, runs, ArrowDecorations::Forward).collect();
         assert_eq!(
-            test_render(&segs, (2, 5)),
+            render_path(start, runs),
             indoc! {"
                 xxxx
                 x-+x
@@ -1155,15 +1241,65 @@ mod tests {
         );
         assert_eq!(res, expected);
         let (start, runs) = res;
-        let segs: Vec<_> = PathIter::new(start, runs, ArrowDecorations::Forward).collect();
         assert_eq!(
-            test_render(&segs, (3, 3)),
+            render_path(start, runs),
             indoc! {"
                 xxxxx
                 x<-+x
                 x  |x
                 x--+x
                 xxxxx"}
+        );
+    }
+
+    // ── Composite ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn composite_two_c_shapes() {
+        use Dir::*;
+        let shape = ConnectorShape::Composite(vec![
+            ConnectorShape::CShape {
+                start: SPoint::new(0, 0),
+                end: SPoint::new(0, 2),
+                dir: Dir::Right,
+                offset: 2,
+            },
+            ConnectorShape::CShape {
+                start: SPoint::new(0, 2),
+                end: SPoint::new(-2, 4),
+                dir: Dir::Left,
+                offset: 2,
+            },
+        ]);
+
+        let (start, runs) = shape.into_runs();
+
+        assert_eq!(
+            (start, runs.clone()),
+            (
+                SPoint::new(0, 0),
+                vec![
+                    (Right, 3),
+                    (Down, 2),
+                    (Left, 2),
+                    (Left, 4),
+                    (Down, 2),
+                    (Right, 2)
+                ]
+            )
+        );
+
+        println!("{}", render_path(start, runs.clone()));
+        assert_eq!(
+            dbg!(render_path(start, runs)),
+            indoc! {"
+                xxxxxxxxx
+                x    --+x
+                x      |x
+                x+-----+x
+                x|      x
+                x+->    x
+                xxxxxxxxx"}
         );
     }
 
@@ -1216,15 +1352,15 @@ mod tests {
         assert_eq!(
             render_scene(&[&a, &b], shape),
             indoc! {"
-                xxxxxxxxx
-                x+-+    x
-                x|0|--+ x
-                x+-+  | x
-                x     | x
-                x+-+  | x
-                x|1|<-+ x
-                x+-+    x
-                xxxxxxxxx"}
+                xxxxxxxx
+                x+-+   x
+                x|0|--+x
+                x+-+  |x
+                x     |x
+                x+-+  |x
+                x|1|<-+x
+                x+-+   x
+                xxxxxxxx"}
         );
     }
 
@@ -1264,15 +1400,15 @@ mod tests {
         assert_eq!(
             render_scene(&[&a, &b], shape),
             indoc! {"
-                xxxxxxxxx
-                x    +-+x
-                x +--|0|x
-                x |  +-+x
-                x |     x
-                x |  +-+x
-                x +->|1|x
-                x    +-+x
-                xxxxxxxxx"}
+                xxxxxxxx
+                x   +-+x
+                x+--|0|x
+                x|  +-+x
+                x|     x
+                x|  +-+x
+                x+->|1|x
+                x   +-+x
+                xxxxxxxx"}
         );
     }
 
@@ -1358,16 +1494,16 @@ mod tests {
         assert_eq!(
             render_scene(&[&a, &b], shape),
             indoc! {"
-                xxxxxxxx
-                x  +-+ x
-                x +----x
-                x |+-+ x
-                x |    x
-                x |    x
-                x |+-+ x
-                x v|1| x
-                x  +-+ x
-                xxxxxxxx"}
+                xxxxxxx
+                x +-+ x
+                x+----x
+                x|+-+ x
+                x|    x
+                x|    x
+                x|+-+ x
+                xv|1| x
+                x +-+ x
+                xxxxxxx"}
         );
     }
 
@@ -1466,7 +1602,6 @@ mod tests {
                 x |    ^ x
                 x |    | x
                 x +----+ x
-                x        x
                 xxxxxxxxxx"}
         );
     }
@@ -1523,34 +1658,32 @@ mod tests {
     // ── Backward arrowhead ────────────────────────────────────────────────────
     #[test]
     fn arrow_backward() {
-        let segs: Vec<_> = PathIter::new(
-            SPoint::new(0, 0),
-            vec![(Dir::Right, 4)],
-            ArrowDecorations::Backward,
-        )
-        .collect();
-        let got = test_render(&segs, (5, 1));
-        let expected = indoc! {"
-            xxxxxxx
-            x<--- x
-            xxxxxxx"};
-        assert_eq!(got, expected);
+        assert_eq!(
+            render_path_arrow(
+                SPoint::new(0, 0),
+                vec![(Dir::Right, 4)],
+                ArrowDecorations::Backward,
+            ),
+            indoc! {"
+                xxxxxx
+                x<---x
+                xxxxxx"}
+        );
     }
 
     // ── Both arrowheads ───────────────────────────────────────────────────────
     #[test]
     fn arrow_both() {
-        let segs: Vec<_> = PathIter::new(
-            SPoint::new(0, 0),
-            vec![(Dir::Right, 5)],
-            ArrowDecorations::Both,
-        )
-        .collect();
-        let got = test_render(&segs, (6, 1));
-        let expected = indoc! {"
-            xxxxxxxx
-            x<---> x
-            xxxxxxxx"};
-        assert_eq!(got, expected);
+        assert_eq!(
+            render_path_arrow(
+                SPoint::new(0, 0),
+                vec![(Dir::Right, 5)],
+                ArrowDecorations::Both,
+            ),
+            indoc! {"
+                xxxxxxx
+                x<--->x
+                xxxxxxx"}
+        );
     }
 }
