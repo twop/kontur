@@ -5,7 +5,7 @@ use crate::geometry::{SPoint, SRect};
 #[derive(Clone, Copy, PartialEq)]
 pub struct NodeId(pub usize);
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Side {
     Top,
     Bottom,

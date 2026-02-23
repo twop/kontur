@@ -662,54 +662,41 @@ impl ConnectorShape {
 pub fn classify_shape(from: &Node, from_side: Side, to: &Node, to_side: Side) -> ConnectorShape {
     let start = connection_point(from, from_side);
     let end = connection_point(to, to_side);
+    const DEFAULT_OFFSET: u16 = 2;
 
-    if from_side == to_side {
-        // Both stubs leave in the same direction → C-shape.
-        // The offset ensures the far column/row clears whichever endpoint
-        // is furthest in that direction, plus a 2-cell margin.
-        let (dir, offset) = match from_side {
-            Side::Right => (Dir::Right, (start.x.max(end.x) - start.x + 2) as u16),
-            Side::Left => (Dir::Left, (start.x - start.x.min(end.x) + 2) as u16),
-            Side::Bottom => (Dir::Down, (start.y.max(end.y) - start.y + 2) as u16),
-            Side::Top => (Dir::Up, (start.y - start.y.min(end.y) + 2) as u16),
-        };
-        ConnectorShape::CShape {
-            start,
-            end,
-            dir,
-            offset,
-        }
-    } else if (from_side == Side::Right && to_side == Side::Left)
-        || (from_side == Side::Left && to_side == Side::Right)
-    {
-        // Opposite horizontal sides → S-shape when nodes are far apart,
-        // L-corner when close (not enough room for an S jog).
-        let dx = (end.x - start.x).abs();
-        if dx >= 6 {
-            ConnectorShape::SShape {
-                start,
-                axis: Axis::Horizontal,
-                end,
-            }
-        } else {
-            ConnectorShape::Corner {
+    match (from_side, to_side) {
+        (from_side, to_side) if from_side == to_side => {
+            // Both stubs leave in the same direction → C-shape.
+            // The offset ensures the far column/row clears whichever endpoint
+            // is furthest in that direction, plus a 2-cell margin.
+            let dir = match from_side {
+                Side::Right => Dir::Right,
+                Side::Left => Dir::Left,
+                Side::Bottom => Dir::Down,
+                Side::Top => Dir::Up,
+            };
+            ConnectorShape::CShape {
                 start,
                 end,
-                start_axis: Axis::Horizontal,
+                dir,
+                offset: DEFAULT_OFFSET,
             }
         }
-    } else {
-        // Mixed sides (horizontal↔vertical) → L-corner.
-        // The first run follows the axis the source stub exits along.
-        let start_axis = match from_side {
-            Side::Right | Side::Left => Axis::Horizontal,
-            Side::Top | Side::Bottom => Axis::Vertical,
-        };
-        ConnectorShape::Corner {
-            start,
-            end,
-            start_axis,
+        (Side::Right, Side::Left) if start.x > end.x => {
+            todo!("composite C-Right + C-Left for Right→Left when end.x < start.x")
         }
+        (Side::Left, Side::Right) if start.x > end.x => {
+            todo!("composite, inverse logic of the prev case with two c-shapes")
+        }
+        (Side::Right, Side::Left) if start.x < end.x => {
+            todo!("simple s-shape")
+        }
+        (Side::Left, Side::Right) if start.x > end.x => {
+            todo!("simple s-shape")
+        }
+        _ => panic!(
+            "unresolved case with:\nstart=({start:?}, {from_side:?})\nend=({end:?}, {to_side:?})"
+        ),
     }
 }
 
