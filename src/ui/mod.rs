@@ -1,8 +1,8 @@
 use ratatui::{
-    Frame,
     layout::{Alignment, Rect},
     style::{Color, Style},
     widgets::{Block, BorderType, Borders, Clear, Paragraph},
+    Frame,
 };
 
 use crate::labels::LabelIter;
@@ -141,7 +141,9 @@ fn render_connections(frame: &mut Frame, nodes: &[Node], edges: &[Edge], vp: &Vi
     use crate::path::PathSymbol;
 
     for edge in edges {
-        let (path_iter, _bounds) = path::calculate_path(nodes, edge);
+        let Some((path_iter, _bounds)) = path::calculate_path(nodes, edge) else {
+            continue;
+        };
 
         for (pt, sym) in path_iter {
             let (sx, sy) = to_screen(pt.x, pt.y, vp);
