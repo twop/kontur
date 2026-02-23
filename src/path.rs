@@ -250,21 +250,51 @@ fn c_shape(start: SPoint, end: SPoint, dir: Dir, offset: u16) -> (SPoint, Vec<(D
     }
 }
 
-/// Corner route: one horizontal and one vertical segment meeting at a bend.
-fn corner(start: SPoint, _s_off: SPoint, end: SPoint, e_off: SPoint) -> (SPoint, Vec<(Dir, u32)>) {
-    let h_dir = if e_off.x >= start.x {
-        Dir::Right
-    } else {
-        Dir::Left
-    };
-    let v_dir = if end.y >= e_off.y { Dir::Down } else { Dir::Up };
-    (
-        start,
-        vec![
-            (h_dir, (e_off.x - start.x).unsigned_abs()),
-            (v_dir, (end.y - e_off.y).unsigned_abs()),
-        ],
-    )
+/// Corner route: one horizontal and one vertical segment meeting at a single bend.
+///
+/// * `start`      — the inclusive start cell of the path.
+/// * `end`        — the inclusive end cell of the path.
+/// * `start_axis` — which axis the first run travels along:
+///   - [`Axis::Horizontal`]: go horizontally to `end.x`, then vertically to `end.y`.
+///   - [`Axis::Vertical`]:   go vertically to `end.y`, then horizontally to `end.x`.
+///
+/// The `+1` on run1 follows the same inclusive-start convention as `c_shape` and
+/// `s_shape`: PathIter emits `start` without advancing, so `distance + 1` steps
+/// are needed to land on the bend column/row.  Run2 starts advancing from the
+/// bend cell, so no `+1` is needed.
+fn corner(start: SPoint, end: SPoint, start_axis: Axis) -> (SPoint, Vec<(Dir, u32)>) {
+    match start_axis {
+        Axis::Horizontal => {
+            let run1_dir = if end.x >= start.x {
+                Dir::Right
+            } else {
+                Dir::Left
+            };
+            let run2_dir = if end.y >= start.y { Dir::Down } else { Dir::Up };
+            (
+                start,
+                vec![
+                    (run1_dir, (end.x - start.x).unsigned_abs() + 1),
+                    (run2_dir, (end.y - start.y).unsigned_abs()),
+                ],
+            )
+        }
+        Axis::Vertical => {
+            let run1_dir = if end.y >= start.y { Dir::Down } else { Dir::Up };
+            let run2_dir = if end.x >= start.x {
+                Dir::Right
+            } else {
+                Dir::Left
+            };
+            (
+                start,
+                vec![
+                    (run1_dir, (end.y - start.y).unsigned_abs() + 1),
+                    (run2_dir, (end.x - start.x).unsigned_abs()),
+                ],
+            )
+        }
+    }
 }
 
 // ── Segment direction ─────────────────────────────────────────────────────────
@@ -455,9 +485,9 @@ impl Iterator for PathIter {
 
 /// Builds the path for `edge`, returning a lazy [`PathIter`] of
 /// `(SPoint, PathSymbol)` pairs and the bounding [`SRect`] of the path.
-pub fn calculate_path(nodes: &[Node], edge: &Edge) -> (PathIter, SRect) {
-    let from_node = nodes.iter().find(|n| n.id == edge.from_id).unwrap();
-    let to_node = nodes.iter().find(|n| n.id == edge.to_id).unwrap();
+pub fn calculate_path(nodes: &[Node], edge: &Edge) -> Option<(PathIter, SRect)> {
+    let from_node = nodes.iter().find(|n| n.id == edge.from_id)?;
+    let to_node = nodes.iter().find(|n| n.id == edge.to_id)?;
 
     let start = connection_point(from_node, edge.from_side);
     let end = connection_point(to_node, edge.to_side);
@@ -478,15 +508,19 @@ pub fn calculate_path(nodes: &[Node], edge: &Edge) -> (PathIter, SRect) {
         if dx.abs() >= 6 {
             s_shape(start, Axis::Horizontal, end)
         } else {
-            corner(start, start, end, end)
+            corner(start, end, Axis::Horizontal)
         }
     } else {
-        corner(start, start, end, end)
+        let start_axis = match edge.from_side {
+            Side::Right | Side::Left => Axis::Horizontal,
+            Side::Top | Side::Bottom => Axis::Vertical,
+        };
+        corner(start, end, start_axis)
     };
 
     let bounds = bounds_from_runs(start, &runs);
     let iter = PathIter::new(start, runs, edge.dir);
-    (iter, bounds)
+    Some((iter, bounds))
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -602,6 +636,90 @@ mod tests {
             x      x
             xxxxxxxx"};
         assert_eq!(got, expected);
+    }
+
+    // ── Corner (function) ─────────────────────────────────────────────────────
+
+    // Horizontal first, end is right and below: Right then Down.
+    // run1: Right 5+1=6 steps to land on col 5, run2: Down 3 steps.
+    #[test]
+    fn corner_horizontal_right_down() {
+        let res = corner(SPoint::new(0, 0), SPoint::new(5, 3), Axis::Horizontal);
+        let expected = (SPoint::new(0, 0), vec![(Dir::Right, 6), (Dir::Down, 3)]);
+        assert_eq!(res, expected);
+        let (start, runs) = res;
+        let segs: Vec<_> = PathIter::new(start, runs, ArrowDecorations::Forward).collect();
+        assert_eq!(
+            test_render(&segs, (6, 4)),
+            indoc! {"
+                xxxxxxxx
+                x-----+x
+                x     |x
+                x     |x
+                x     vx
+                xxxxxxxx"}
+        );
+    }
+
+    // Horizontal first, end is left and above: Left then Up.
+    // run1: Left 4+1=5 to land on col 0, run2: Up 2.
+    #[test]
+    fn corner_horizontal_left_up() {
+        let res = corner(SPoint::new(4, 2), SPoint::new(0, 0), Axis::Horizontal);
+        let expected = (SPoint::new(4, 2), vec![(Dir::Left, 5), (Dir::Up, 2)]);
+        assert_eq!(res, expected);
+        let (start, runs) = res;
+        let segs: Vec<_> = PathIter::new(start, runs, ArrowDecorations::Forward).collect();
+        assert_eq!(
+            test_render(&segs, (5, 3)),
+            indoc! {"
+                xxxxxxx
+                x^    x
+                x|    x
+                x+----x
+                xxxxxxx"}
+        );
+    }
+
+    // Vertical first, end is right and below: Down then Right.
+    // run1: Down 3+1=4 to land on row 3, run2: Right 5.
+    #[test]
+    fn corner_vertical_down_right() {
+        let res = corner(SPoint::new(0, 0), SPoint::new(5, 3), Axis::Vertical);
+        let expected = (SPoint::new(0, 0), vec![(Dir::Down, 4), (Dir::Right, 5)]);
+        assert_eq!(res, expected);
+        let (start, runs) = res;
+        let segs: Vec<_> = PathIter::new(start, runs, ArrowDecorations::Forward).collect();
+        assert_eq!(
+            test_render(&segs, (6, 4)),
+            indoc! {"
+                xxxxxxxx
+                x|     x
+                x|     x
+                x|     x
+                x+---->x
+                xxxxxxxx"}
+        );
+    }
+
+    // Vertical first, end is left and above: Up then Left.
+    // run1: Up 2+1=3 to land on row 0, run2: Left 4.
+    #[test]
+    fn corner_vertical_up_left() {
+        let res = corner(SPoint::new(4, 2), SPoint::new(0, 0), Axis::Vertical);
+        let expected = (SPoint::new(4, 2), vec![(Dir::Up, 3), (Dir::Left, 4)]);
+        assert_eq!(res, expected);
+        let (start, runs) = res;
+        let segs: Vec<_> = PathIter::new(start, runs, ArrowDecorations::Forward).collect();
+        assert_eq!(
+            test_render(&segs, (5, 3)),
+            indoc! {"
+                xxxxxxx
+                x<---+x
+                x    |x
+                x    |x
+                xxxxxxx"}
+        );
     }
 
     // ── S-shape ───────────────────────────────────────────────────────────────
