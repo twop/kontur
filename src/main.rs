@@ -1,4 +1,5 @@
 pub mod actions;
+pub mod binding;
 pub mod geometry;
 pub mod labels;
 pub mod path;
