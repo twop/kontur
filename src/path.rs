@@ -409,6 +409,7 @@ pub struct PathIter {
 
 impl PathIter {
     fn new(start: SPoint, runs: Vec<(Dir, u32)>, arrow: ArrowDecorations) -> Self {
+        let runs: Vec<(Dir, u32)> = runs.into_iter().filter(|&(_, steps)| steps > 0).collect();
         Self {
             runs,
             arrow,
@@ -459,6 +460,7 @@ impl Iterator for PathIter {
         //   then position within
         //   and then
         let (dir, steps) = self.runs[self.run_index];
+        debug_assert!(steps > 0, "zero-step run passed to PathIter");
 
         if steps == self.completed_steps + 1 {
             // that means that we on the last step in the run, hence we need to check how and if we change the direction
@@ -1114,7 +1116,11 @@ mod tests {
 
         let mut grid = vec![vec![' '; w]; h];
 
-        for (pt, sym) in PathIter::new(start, runs, arrow) {
+        for (i, (pt, sym)) in PathIter::new(start, runs, arrow).enumerate() {
+            assert!(
+                i < 100,
+                "PathIter exceeded 100 items — likely an infinite loop"
+            );
             let px = (pt.x - ox) as usize;
             let py = (pt.y - oy) as usize;
             if pt.x >= ox && pt.y >= oy && px < w && py < h {
@@ -1194,7 +1200,11 @@ mod tests {
         }
 
         // Paint the path on top.
-        for (pt, sym) in PathIter::new(start, runs, ArrowDecorations::Forward) {
+        for (i, (pt, sym)) in PathIter::new(start, runs, ArrowDecorations::Forward).enumerate() {
+            assert!(
+                i < 100,
+                "PathIter exceeded 100 items — likely an infinite loop"
+            );
             let px = (pt.x - ox) as usize;
             let py = (pt.y - oy) as usize;
             if pt.x >= ox && pt.y >= oy && px < w && py < h {
@@ -1429,6 +1439,29 @@ mod tests {
             vec![(Dir::Right, 1), (Dir::Down, 4), (Dir::Right, 0)],
         );
         assert_eq!(res, expected);
+    }
+
+    // Horizontal stubs, degenerate: same y — start and end on the same
+    // horizontal line.  The S-shape collapses to a straight horizontal line
+    // because the middle vertical jog has 0 steps.
+    //
+    // mid_x = (0+8)/2 = 4
+    // runs: Right 5 (+1 to land on col 4), Down 0, Right 4 (exact from col 4 to col 8)
+    //
+    // We only assert the runs here — PathIter::new strips zero-step runs and
+    // fires a debug_assert for each one, so calling render_path in a debug
+    // build would panic.  The rendering behaviour (a plain horizontal line)
+    // is a consequence of the zero-step run being filtered out.
+    #[test]
+    fn s_shape_horizontal_degenerate_same_y() {
+        let res = s_shape(SPoint::new(0, 0), Axis::Horizontal, SPoint::new(8, 0));
+        assert_eq!(
+            res,
+            (
+                SPoint::new(0, 0),
+                vec![(Dir::Right, 5), (Dir::Down, 0), (Dir::Right, 4)],
+            )
+        );
     }
 
     // Vertical stubs, end is right and below start.

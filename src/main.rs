@@ -7,9 +7,31 @@ pub mod state;
 pub mod ui;
 pub mod update;
 
-use crossterm::event::KeyCode;
+use crossterm::event::{KeyCode, KeyModifiers};
 use geometry::{SPoint, SRect};
 use state::{AppState, ArrowDecorations, BlockMode, Edge, Mode, Node, NodeId, Side, Viewport};
+use update::{update, UpdateResult};
+
+fn format_key(code: KeyCode, mods: KeyModifiers) -> String {
+    let key = match code {
+        KeyCode::Char(' ') => "space".to_string(),
+        KeyCode::Char(c) => c.to_string(),
+        KeyCode::Enter => "enter".to_string(),
+        KeyCode::Esc => "esc".to_string(),
+        KeyCode::Backspace => "bksp".to_string(),
+        KeyCode::Left => "←".to_string(),
+        KeyCode::Right => "→".to_string(),
+        KeyCode::Up => "↑".to_string(),
+        KeyCode::Down => "↓".to_string(),
+        KeyCode::Tab => "tab".to_string(),
+        other => format!("{:?}", other),
+    };
+    if mods.is_empty() {
+        key
+    } else {
+        format!("{:?}+{}", mods, key)
+    }
+}
 
 // ── Demo graph ────────────────────────────────────────────────────────────────
 
@@ -76,252 +98,6 @@ fn make_demo_graph() -> (Vec<Node>, Vec<Edge>) {
     (Vec::from(nodes), edges)
 }
 
-// ── Cursor / input helpers ────────────────────────────────────────────────────
-
-fn clamp_cursor(input: &str, pos: usize) -> usize {
-    pos.clamp(0, input.chars().count())
-}
-
-fn byte_index(input: &str, cursor: usize) -> usize {
-    input
-        .char_indices()
-        .map(|(i, _)| i)
-        .nth(cursor)
-        .unwrap_or(input.len())
-}
-
-fn input_enter_char(input: &mut String, cursor: &mut usize, ch: char) {
-    let idx = byte_index(input, *cursor);
-    input.insert(idx, ch);
-    *cursor = clamp_cursor(input, cursor.saturating_add(1));
-}
-
-fn input_delete_char(input: &mut String, cursor: &mut usize) {
-    if *cursor == 0 {
-        return;
-    }
-    let before = input.chars().take(*cursor - 1);
-    let after = input.chars().skip(*cursor);
-    *input = before.chain(after).collect();
-    *cursor = clamp_cursor(input, cursor.saturating_sub(1));
-}
-
-// ── Input handling ────────────────────────────────────────────────────────────
-
-fn handle_key(
-    code: KeyCode,
-    vp: &mut Viewport,
-    mode: &mut Mode,
-    nodes: &mut Vec<Node>,
-    frame_w: i32,
-    frame_h: i32,
-) {
-    match mode {
-        Mode::SelectedBlock(id, BlockMode::Editing { input, cursor }) => match code {
-            KeyCode::Char(ch) => input_enter_char(input, cursor, ch),
-            KeyCode::Backspace => input_delete_char(input, cursor),
-            KeyCode::Left => *cursor = clamp_cursor(input, cursor.saturating_sub(1)),
-            KeyCode::Right => *cursor = clamp_cursor(input, cursor.saturating_add(1)),
-            KeyCode::Enter => {
-                let id = *id;
-                let new_label = input.clone();
-                if let Some(node) = nodes.iter_mut().find(|n| n.id == id) {
-                    node.label = new_label;
-                }
-                *mode = Mode::SelectedBlock(id, BlockMode::Selected);
-            }
-            KeyCode::Esc => {
-                let id = *id;
-                *mode = Mode::SelectedBlock(id, BlockMode::Selected);
-            }
-            _ => {}
-        },
-
-        Mode::SelectedBlock(id, BlockMode::Resizing) => {
-            let id = *id;
-            match code {
-                KeyCode::Char('h') => {
-                    if let Some(node) = nodes.iter_mut().find(|n| n.id == id) {
-                        node.rect.origin.x -= 1;
-                        node.rect.size.width += 1;
-                    }
-                }
-                KeyCode::Char('l') => {
-                    if let Some(node) = nodes.iter_mut().find(|n| n.id == id) {
-                        node.rect.size.width += 1;
-                    }
-                }
-                KeyCode::Char('k') => {
-                    if let Some(node) = nodes.iter_mut().find(|n| n.id == id) {
-                        node.rect.origin.y -= 1;
-                        node.rect.size.height += 1;
-                    }
-                }
-                KeyCode::Char('j') => {
-                    if let Some(node) = nodes.iter_mut().find(|n| n.id == id) {
-                        node.rect.size.height += 1;
-                    }
-                }
-                KeyCode::Char('H') => {
-                    if let Some(node) = nodes.iter_mut().find(|n| n.id == id) {
-                        if node.rect.size.width > 3 {
-                            node.rect.origin.x += 1;
-                            node.rect.size.width -= 1;
-                        }
-                    }
-                }
-                KeyCode::Char('L') => {
-                    if let Some(node) = nodes.iter_mut().find(|n| n.id == id) {
-                        if node.rect.size.width > 3 {
-                            node.rect.size.width -= 1;
-                        }
-                    }
-                }
-                KeyCode::Char('K') => {
-                    if let Some(node) = nodes.iter_mut().find(|n| n.id == id) {
-                        if node.rect.size.height > 3 {
-                            node.rect.origin.y += 1;
-                            node.rect.size.height -= 1;
-                        }
-                    }
-                }
-                KeyCode::Char('J') => {
-                    if let Some(node) = nodes.iter_mut().find(|n| n.id == id) {
-                        if node.rect.size.height > 3 {
-                            node.rect.size.height -= 1;
-                        }
-                    }
-                }
-                KeyCode::Esc => *mode = Mode::SelectedBlock(id, BlockMode::Selected),
-                _ => {}
-            }
-        }
-
-        Mode::SelectedBlock(id, BlockMode::Selected) => match code {
-            KeyCode::Char('h') => {
-                if let Some(node) = nodes.iter_mut().find(|n| n.id == *id) {
-                    node.rect.origin.x -= 1;
-                }
-            }
-            KeyCode::Char('H') => {
-                if let Some(node) = nodes.iter_mut().find(|n| n.id == *id) {
-                    node.rect.origin.x -= 5;
-                }
-            }
-            KeyCode::Char('l') => {
-                if let Some(node) = nodes.iter_mut().find(|n| n.id == *id) {
-                    node.rect.origin.x += 1;
-                }
-            }
-            KeyCode::Char('L') => {
-                if let Some(node) = nodes.iter_mut().find(|n| n.id == *id) {
-                    node.rect.origin.x += 5;
-                }
-            }
-            KeyCode::Char('k') => {
-                if let Some(node) = nodes.iter_mut().find(|n| n.id == *id) {
-                    node.rect.origin.y -= 1;
-                }
-            }
-            KeyCode::Char('K') => {
-                if let Some(node) = nodes.iter_mut().find(|n| n.id == *id) {
-                    node.rect.origin.y -= 5;
-                }
-            }
-            KeyCode::Char('j') => {
-                if let Some(node) = nodes.iter_mut().find(|n| n.id == *id) {
-                    node.rect.origin.y += 1;
-                }
-            }
-            KeyCode::Char('J') => {
-                if let Some(node) = nodes.iter_mut().find(|n| n.id == *id) {
-                    node.rect.origin.y += 5;
-                }
-            }
-            KeyCode::Char('r') => {
-                let id = *id;
-                *mode = Mode::SelectedBlock(id, BlockMode::Resizing);
-            }
-            KeyCode::Char('i') => {
-                let id = *id;
-                let current = nodes
-                    .iter()
-                    .find(|n| n.id == id)
-                    .map(|n| n.label.clone())
-                    .unwrap_or_default();
-                let cursor = current.chars().count();
-                *mode = Mode::SelectedBlock(
-                    id,
-                    BlockMode::Editing {
-                        input: current,
-                        cursor,
-                    },
-                );
-            }
-            KeyCode::Enter => {
-                let labels = ui::assign_labels(nodes, vp, frame_w, frame_h);
-                let prev = Box::new(mode.clone());
-                *mode = Mode::Selecting {
-                    labels,
-                    current: String::new(),
-                    prev,
-                };
-            }
-            KeyCode::Esc => *mode = Mode::Normal,
-            _ => {}
-        },
-
-        Mode::Normal => match code {
-            KeyCode::Char('h') => vp.center.x -= 3,
-            KeyCode::Char('l') => vp.center.x += 3,
-            KeyCode::Char('k') => vp.center.y += 3,
-            KeyCode::Char('j') => vp.center.y -= 3,
-            KeyCode::Enter => {
-                let labels = ui::assign_labels(nodes, vp, frame_w, frame_h);
-                let prev = Box::new(mode.clone());
-                *mode = Mode::Selecting {
-                    labels,
-                    current: String::new(),
-                    prev,
-                };
-            }
-            _ => {}
-        },
-
-        Mode::Selecting {
-            labels,
-            current,
-            prev,
-        } => match code {
-            KeyCode::Esc => {
-                *mode = *prev.clone();
-            }
-            KeyCode::Char(ch) => {
-                current.push(ch);
-                let current_str = current.clone();
-                let prev_mode = *prev.clone();
-
-                if let Some((matched_id, _)) =
-                    labels.iter().find(|(_, label)| *label == current_str)
-                {
-                    let matched_id = *matched_id;
-                    *mode = Mode::SelectedBlock(matched_id, BlockMode::Selected);
-                    return;
-                }
-
-                let any_partial = labels
-                    .iter()
-                    .any(|(_, label)| label.starts_with(current_str.as_str()));
-
-                if !any_partial {
-                    *mode = prev_mode;
-                }
-            }
-            _ => {}
-        },
-    }
-}
-
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 fn main() -> color_eyre::Result<()> {
@@ -332,6 +108,8 @@ fn main() -> color_eyre::Result<()> {
     crossterm::execute!(stdout, crossterm::terminal::EnterAlternateScreen)?;
     let backend = ratatui::backend::CrosstermBackend::new(stdout);
     let mut terminal = ratatui::Terminal::new(backend)?;
+
+    let mut key_log: Vec<String> = Vec::new();
 
     let (nodes, edges) = make_demo_graph();
     let mut app = AppState {
@@ -344,20 +122,57 @@ fn main() -> color_eyre::Result<()> {
     };
 
     loop {
+        let bindings = binding::bindings_for_mode(&app.mode);
+
         terminal.draw(|frame| {
-            ui::render_map(frame, &app.nodes, &app.edges, &app.vp, &app.mode);
+            ui::render_map(
+                frame, &app.nodes, &app.edges, &app.vp, &app.mode, &bindings, &key_log,
+            );
         })?;
 
         if crossterm::event::poll(std::time::Duration::from_millis(50))? {
             if let crossterm::event::Event::Key(key) = crossterm::event::read()? {
-                let editing = matches!(app.mode, Mode::SelectedBlock(_, BlockMode::Editing { .. }));
-                if key.code == KeyCode::Char('q') && !editing {
-                    break;
-                }
+                key_log.insert(0, format_key(key.code, key.modifiers));
+
                 let size = terminal.size()?;
                 let fw = size.width as i32;
                 let fh = size.height as i32 - 1;
-                handle_key(key.code, &mut app.vp, &mut app.mode, &mut app.nodes, fw, fh);
+
+                // Walk bindings in order; the first match wins.
+                let mut action = None;
+                for b in bindings.iter() {
+                    match b {
+                        binding::Binding::Single(inst) => {
+                            if inst.key.key == key.code && inst.key.modifiers == key.modifiers {
+                                action = Some(inst.action.clone());
+                                break;
+                            }
+                        }
+                        binding::Binding::Group {
+                            bindings: members, ..
+                        } => {
+                            if let Some(inst) = members
+                                .iter()
+                                .find(|i| i.key.key == key.code && i.key.modifiers == key.modifiers)
+                            {
+                                action = Some(inst.action.clone());
+                                break;
+                            }
+                        }
+                        binding::Binding::Listen(listener) => {
+                            if let Some(a) = (listener.handler)(key) {
+                                action = Some(a);
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                if let Some(a) = action {
+                    if update(&mut app, a, fw, fh) == UpdateResult::Quit {
+                        break;
+                    }
+                }
             }
         }
     }

@@ -1,10 +1,13 @@
+use crossterm::event::KeyCode;
 use ratatui::{
     Frame,
-    layout::{Alignment, Rect},
+    layout::{Alignment, Constraint, Rect},
     style::{Color, Style},
-    widgets::{Block, BorderType, Borders, Clear, Paragraph},
+    text::{Line, Span},
+    widgets::{Block, BorderType, Borders, Cell, Clear, Paragraph, Row, Table},
 };
 
+use crate::binding::Binding;
 use crate::labels::LabelIter;
 use crate::path::{self, PathError};
 use crate::state::{BlockMode, Edge, Mode, Node, NodeId, Viewport};
@@ -152,7 +155,7 @@ fn render_connections(
     for edge in edges {
         match path::calculate_path(nodes, edge) {
             Ok((path_iter, _bounds)) => {
-                for (pt, sym) in path_iter {
+                for (pt, sym) in path_iter.take(100) {
                     let (sx, sy) = to_screen(pt.x, pt.y, vp);
                     if !in_frame(sx, sy, frame) {
                         continue;
@@ -215,10 +218,7 @@ fn render_selection_labels(
     labels: &[(NodeId, String)],
     current: &str,
 ) {
-    use ratatui::{
-        style::Modifier,
-        text::{Line, Span},
-    };
+    use ratatui::style::Modifier;
 
     let fw = frame.area().width as i32;
     let fh = frame.area().height as i32 - 1;
@@ -316,31 +316,149 @@ fn render_popup(frame: &mut Frame, input: &str, cursor: usize) {
     frame.set_cursor_position(Position::new(inner.x + cursor as u16, inner.y));
 }
 
-// ── Hint bar ─────────────────────────────────────────────────────────────────
+// ── Hints panel ───────────────────────────────────────────────────────────────
 
-fn render_hint(frame: &mut Frame, mode: &Mode) {
-    let area = frame.area();
-    let hint_area = Rect::new(0, area.height.saturating_sub(1), area.width, 1);
-    let text = match mode {
-        Mode::Normal => "  [normal]  hjkl: pan   enter: select node   q: quit",
-        Mode::SelectedBlock(_, BlockMode::Selected) => {
-            "  [selected]   hjkl: move ×1   HJKL: move ×5   r: resize   i: edit   enter: select node   esc: deselect   q: quit"
-        }
-        Mode::SelectedBlock(_, BlockMode::Resizing) => {
-            "  [resize]  hjkl: expand in direction   HJKL: shrink from direction   esc: back   q: quit"
-        }
-        Mode::SelectedBlock(_, BlockMode::Editing { .. }) => {
-            "  [editing]  enter: confirm   esc: cancel"
-        }
-        Mode::Selecting { .. } => "  [select node]  type label to jump   esc: cancel",
-    };
-    let hint = Paragraph::new(text).style(Style::default().fg(Color::DarkGray));
-    frame.render_widget(hint, hint_area);
+/// Format a `KeyCode` as a short human-readable string.
+fn key_label(code: &KeyCode) -> String {
+    match code {
+        KeyCode::Char(' ') => "space".to_string(),
+        KeyCode::Char(c) => c.to_string(),
+        KeyCode::Enter => "enter".to_string(),
+        KeyCode::Esc => "esc".to_string(),
+        KeyCode::Backspace => "bksp".to_string(),
+        KeyCode::Left => "←".to_string(),
+        KeyCode::Right => "→".to_string(),
+        KeyCode::Up => "↑".to_string(),
+        KeyCode::Down => "↓".to_string(),
+        KeyCode::Tab => "tab".to_string(),
+        other => format!("{:?}", other),
+    }
+}
+
+/// Build `(key_string, description)` pairs for a set of bindings.
+///
+/// Each `Binding::Single` becomes one row with its key and description.
+/// Each `Binding::Group` becomes one row with all member keys joined and the group name.
+/// Each `Binding::Listen` becomes one row with `…` as the key and the description.
+fn hint_table_data(bindings: &[Binding]) -> Vec<(String, String)> {
+    bindings
+        .iter()
+        .map(|b| match b {
+            Binding::Single(inst) => {
+                let key = key_label(&inst.key.key);
+                let desc = inst.description.to_string();
+                (key, desc)
+            }
+            Binding::Group {
+                name,
+                bindings: members,
+            } => {
+                let keys: String = members
+                    .iter()
+                    .map(|i| key_label(&i.key.key))
+                    .collect::<Vec<_>>()
+                    .join("");
+                (keys, name.clone())
+            }
+            Binding::Listen(listener) => {
+                let desc = listener.description.to_string();
+                ("…".to_string(), desc)
+            }
+        })
+        .collect()
+}
+
+/// Render the hints panel anchored to the bottom-right corner, framed and
+/// aligned using a `Table` widget.
+fn render_hints_panel(frame: &mut Frame, bindings: &[Binding]) {
+    let data = hint_table_data(bindings);
+    if data.is_empty() {
+        return;
+    }
+
+    let key_style = Style::default().fg(Color::Yellow);
+    let desc_style = Style::default().fg(Color::Gray);
+
+    // Compute column widths from actual content.
+    let key_col_w = data
+        .iter()
+        .map(|(k, _)| k.chars().count())
+        .max()
+        .unwrap_or(1) as u16;
+    let desc_col_w = data
+        .iter()
+        .map(|(_, d)| d.chars().count())
+        .max()
+        .unwrap_or(1) as u16;
+
+    // Build table rows.
+    let rows: Vec<Row> = data
+        .into_iter()
+        .map(|(key, desc)| {
+            Row::new(vec![
+                Cell::from(key).style(key_style),
+                Cell::from(desc).style(desc_style),
+            ])
+        })
+        .collect();
+
+    let row_count = rows.len() as u16;
+
+    let fa = frame.area();
+
+    // panel_w = border(1) + key_col + gap(1) + desc_col + border(1)
+    let panel_w = (1 + key_col_w + 1 + desc_col_w + 1).min(fa.width);
+    // panel_h = border(1) + rows + border(1)
+    let panel_h = (row_count + 2).min(fa.height);
+
+    // Anchor: bottom-right.
+    let x = fa.width.saturating_sub(panel_w);
+    let y = fa.height.saturating_sub(panel_h);
+
+    let area = Rect::new(x, y, panel_w, panel_h);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(Color::DarkGray));
+
+    let table = Table::new(
+        rows,
+        [
+            Constraint::Length(key_col_w),
+            Constraint::Length(desc_col_w),
+        ],
+    )
+    .block(block)
+    .column_spacing(1);
+
+    frame.render_widget(Clear, area);
+    frame.render_widget(table, area);
+}
+
+// ── Key log bar ───────────────────────────────────────────────────────────────
+
+fn render_key_log(frame: &mut Frame, key_log: &[String]) {
+    let fa = frame.area();
+    let area = Rect::new(0, fa.height.saturating_sub(1), fa.width, 1);
+    let text = key_log.join("  ");
+    frame.render_widget(
+        Paragraph::new(text).style(Style::default().fg(Color::DarkGray)),
+        area,
+    );
 }
 
 // ── Top-level render ──────────────────────────────────────────────────────────
 
-pub fn render_map(frame: &mut Frame, nodes: &[Node], edges: &[Edge], vp: &Viewport, mode: &Mode) {
+pub fn render_map(
+    frame: &mut Frame,
+    nodes: &[Node],
+    edges: &[Edge],
+    vp: &Viewport,
+    mode: &Mode,
+    bindings: &[Binding],
+    _key_log: &[String],
+) {
     frame.render_widget(ratatui::widgets::Clear, frame.area());
     let path_errors = render_connections(frame, nodes, edges, vp);
     render_nodes(frame, nodes, vp, mode);
@@ -351,7 +469,8 @@ pub fn render_map(frame: &mut Frame, nodes: &[Node], edges: &[Edge], vp: &Viewpo
     {
         render_selection_labels(frame, nodes, vp, labels, current);
     }
-    render_hint(frame, mode);
+    render_hints_panel(frame, bindings);
+    // render_key_log(frame, key_log);
     if let Mode::SelectedBlock(_, BlockMode::Editing { input, cursor }) = mode {
         render_popup(frame, input, *cursor);
     }

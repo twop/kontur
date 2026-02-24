@@ -45,8 +45,28 @@ pub struct BindingInstance {
 
 impl BindingInstance {
     pub fn new(key: KeyCode, action: Action, description: &'static str) -> Self {
+        // Uppercase characters are reported by terminals as Shift + lowercase,
+        // so automatically attach the SHIFT modifier when an uppercase char is
+        // used as the key code.
+        let modifiers = match key {
+            KeyCode::Char(c) if c.is_uppercase() => KeyModifiers::SHIFT,
+            _ => KeyModifiers::NONE,
+        };
         Self {
-            key: KeyBinding::plain(key),
+            key: KeyBinding::with_mods(key, modifiers),
+            action,
+            description,
+        }
+    }
+
+    pub fn with_mods(
+        key: KeyCode,
+        modifiers: KeyModifiers,
+        action: Action,
+        description: &'static str,
+    ) -> Self {
+        Self {
+            key: KeyBinding::with_mods(key, modifiers),
             action,
             description,
         }
@@ -56,6 +76,14 @@ impl BindingInstance {
 impl From<(KeyCode, Action, &'static str)> for BindingInstance {
     fn from((key, action, description): (KeyCode, Action, &'static str)) -> Self {
         Self::new(key, action, description)
+    }
+}
+
+impl From<(KeyCode, KeyModifiers, Action, &'static str)> for BindingInstance {
+    fn from(
+        (key, modifiers, action, description): (KeyCode, KeyModifiers, Action, &'static str),
+    ) -> Self {
+        Self::with_mods(key, modifiers, action, description)
     }
 }
 
@@ -154,10 +182,30 @@ pub fn bindings_for_mode(mode: &Mode) -> Vec<Binding> {
             Binding::group(
                 "Move Fast",
                 [
-                    (KeyCode::Char('H'), MoveFast(Dir::Left), "move left ×5"),
-                    (KeyCode::Char('L'), MoveFast(Dir::Right), "move right ×5"),
-                    (KeyCode::Char('K'), MoveFast(Dir::Up), "move up ×5"),
-                    (KeyCode::Char('J'), MoveFast(Dir::Down), "move down ×5"),
+                    (
+                        KeyCode::Char('H'),
+                        KeyModifiers::SHIFT,
+                        MoveFast(Dir::Left),
+                        "move left ×5",
+                    ),
+                    (
+                        KeyCode::Char('L'),
+                        KeyModifiers::SHIFT,
+                        MoveFast(Dir::Right),
+                        "move right ×5",
+                    ),
+                    (
+                        KeyCode::Char('K'),
+                        KeyModifiers::SHIFT,
+                        MoveFast(Dir::Up),
+                        "move up ×5",
+                    ),
+                    (
+                        KeyCode::Char('J'),
+                        KeyModifiers::SHIFT,
+                        MoveFast(Dir::Down),
+                        "move down ×5",
+                    ),
                 ],
             ),
             Binding::single((KeyCode::Char('r'), StartResizing, "enter resize mode")),
@@ -180,10 +228,30 @@ pub fn bindings_for_mode(mode: &Mode) -> Vec<Binding> {
             Binding::group(
                 "Shrink",
                 [
-                    (KeyCode::Char('H'), Shrink(Dir::Left), "shrink left"),
-                    (KeyCode::Char('L'), Shrink(Dir::Right), "shrink right"),
-                    (KeyCode::Char('K'), Shrink(Dir::Up), "shrink up"),
-                    (KeyCode::Char('J'), Shrink(Dir::Down), "shrink down"),
+                    (
+                        KeyCode::Char('H'),
+                        KeyModifiers::SHIFT,
+                        Shrink(Dir::Left),
+                        "shrink left",
+                    ),
+                    (
+                        KeyCode::Char('L'),
+                        KeyModifiers::SHIFT,
+                        Shrink(Dir::Right),
+                        "shrink right",
+                    ),
+                    (
+                        KeyCode::Char('K'),
+                        KeyModifiers::SHIFT,
+                        Shrink(Dir::Up),
+                        "shrink up",
+                    ),
+                    (
+                        KeyCode::Char('J'),
+                        KeyModifiers::SHIFT,
+                        Shrink(Dir::Down),
+                        "shrink down",
+                    ),
                 ],
             ),
             Binding::single((KeyCode::Esc, Cancel, "exit resize mode")),
