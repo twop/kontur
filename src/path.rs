@@ -492,6 +492,31 @@ impl Iterator for PathIter {
 
 // ── ConnectorShape ────────────────────────────────────────────────────────────
 
+/// Contextual details captured when a connector shape is not yet implemented.
+///
+/// Stored inside [`ConnectorShape::NotImplemented`] and also carried as the
+/// payload of [`PathError::NotImplemented`] so that callers can inspect or
+/// display the missing configuration.
+#[derive(Debug, PartialEq, Clone)]
+pub struct NotImplementedDetails {
+    pub from_rect: SRect,
+    pub from_side: Side,
+    pub to_rect: SRect,
+    pub to_side: Side,
+    pub start: SPoint,
+    pub end: SPoint,
+}
+
+/// Error returned by [`calculate_path`] when the path cannot be computed.
+#[derive(Debug, PartialEq)]
+pub enum PathError {
+    /// One or both node IDs referenced by the edge were not found in `nodes`.
+    NodeNotFound,
+    /// The connector shape for this combination of sides / positions is not
+    /// yet implemented.  The inner value describes the failing configuration.
+    NotImplemented(NotImplementedDetails),
+}
+
 /// Describes which shape function to invoke and with what arguments to render
 /// a connector between two nodes.
 ///
@@ -520,11 +545,18 @@ pub enum ConnectorShape {
         end: SPoint,
         start_axis: Axis,
     },
-    Line {
-        start: SPoint,
-        dir: Dir,
-        len: u16,
-    },
+    /// A straight single-segment line.
+    ///
+    /// * `start` — inclusive start cell.
+    /// * `dir`   — direction of travel.
+    /// * `len`   — number of additional steps after `start` (so the total
+    ///             number of cells occupied is `len + 1`).
+    Line { start: SPoint, dir: Dir, len: u16 },
+    /// Placeholder for a connector configuration that has not yet been
+    /// implemented.  Carries all the context needed to route the connection so
+    /// that it can be displayed as a diagnostic or used to implement the shape
+    /// later.
+    NotImplemented(NotImplementedDetails),
     /// A composite of multiple primitive shapes chained end-to-end.
     ///
     /// The end point of each shape must equal the start point of the next.
@@ -565,6 +597,8 @@ impl ConnectorShape {
             ConnectorShape::CShape { start, .. } => *start,
             ConnectorShape::SShape { start, .. } => *start,
             ConnectorShape::Corner { start, .. } => *start,
+            ConnectorShape::Line { start, .. } => *start,
+            ConnectorShape::NotImplemented(d) => d.start,
             ConnectorShape::Composite(shapes) => shapes[0].start(),
         }
     }
@@ -595,6 +629,8 @@ impl ConnectorShape {
                 end,
                 start_axis,
             } => corner(*start, *end, *start_axis),
+            ConnectorShape::Line { start, dir, len } => (*start, vec![(*dir, *len as u32 + 1)]),
+            ConnectorShape::NotImplemented(d) => (d.start, vec![]),
             ConnectorShape::Composite(_) => unreachable!("handled above"),
         }
     }
@@ -618,6 +654,8 @@ impl ConnectorShape {
                 end,
                 start_axis,
             } => corner(start, end, start_axis),
+            ConnectorShape::Line { start, dir, len } => (start, vec![(dir, len as u32 + 1)]),
+            ConnectorShape::NotImplemented(d) => (d.start, vec![]),
             ConnectorShape::Composite(shapes) => {
                 assert!(
                     !shapes.is_empty(),
@@ -816,6 +854,8 @@ pub fn classify_shape(from: &Node, from_side: Side, to: &Node, to_side: Side) ->
                 offset: DEFAULT_OFFSET,
             },
         ])),
+        // All (Right, Top) guards above are exhaustive; this arm is unreachable.
+        (Side::Right, Side::Top) => unreachable!("all Right→Top cases are covered by guards above"),
 
         // Right → Bottom
         //
@@ -834,9 +874,14 @@ pub fn classify_shape(from: &Node, from_side: Side, to: &Node, to_side: Side) ->
             start_axis: Axis::Horizontal,
         },
 
-        (Side::Right, Side::Bottom) => {
-            todo!("composite for Right→Bottom when end node is not below start")
-        }
+        (Side::Right, Side::Bottom) => ConnectorShape::NotImplemented(NotImplementedDetails {
+            from_rect: from.rect,
+            from_side,
+            to_rect: to.rect,
+            to_side,
+            start,
+            end,
+        }),
 
         // Left → Top
         //
@@ -853,9 +898,14 @@ pub fn classify_shape(from: &Node, from_side: Side, to: &Node, to_side: Side) ->
             end,
             start_axis: Axis::Horizontal,
         },
-        (Side::Left, Side::Top) => {
-            todo!("composite for Left→Top when end node is not above start")
-        }
+        (Side::Left, Side::Top) => ConnectorShape::NotImplemented(NotImplementedDetails {
+            from_rect: from.rect,
+            from_side,
+            to_rect: to.rect,
+            to_side,
+            start,
+            end,
+        }),
 
         // Left → Bottom
         //
@@ -872,9 +922,14 @@ pub fn classify_shape(from: &Node, from_side: Side, to: &Node, to_side: Side) ->
             end,
             start_axis: Axis::Horizontal,
         },
-        (Side::Left, Side::Bottom) => {
-            todo!("composite for Left→Bottom when end node is not below start")
-        }
+        (Side::Left, Side::Bottom) => ConnectorShape::NotImplemented(NotImplementedDetails {
+            from_rect: from.rect,
+            from_side,
+            to_rect: to.rect,
+            to_side,
+            start,
+            end,
+        }),
 
         // Top → Right
         //
@@ -888,9 +943,14 @@ pub fn classify_shape(from: &Node, from_side: Side, to: &Node, to_side: Side) ->
             end,
             start_axis: Axis::Vertical,
         },
-        (Side::Top, Side::Right) => {
-            todo!("composite for Top→Right when end node is not to the right of start")
-        }
+        (Side::Top, Side::Right) => ConnectorShape::NotImplemented(NotImplementedDetails {
+            from_rect: from.rect,
+            from_side,
+            to_rect: to.rect,
+            to_side,
+            start,
+            end,
+        }),
 
         // Top → Left
         //
@@ -904,9 +964,14 @@ pub fn classify_shape(from: &Node, from_side: Side, to: &Node, to_side: Side) ->
             end,
             start_axis: Axis::Vertical,
         },
-        (Side::Top, Side::Left) => {
-            todo!("composite for Top→Left when end node is not to the left of start")
-        }
+        (Side::Top, Side::Left) => ConnectorShape::NotImplemented(NotImplementedDetails {
+            from_rect: from.rect,
+            from_side,
+            to_rect: to.rect,
+            to_side,
+            start,
+            end,
+        }),
 
         // Bottom → Right
         //
@@ -920,9 +985,14 @@ pub fn classify_shape(from: &Node, from_side: Side, to: &Node, to_side: Side) ->
             end,
             start_axis: Axis::Vertical,
         },
-        (Side::Bottom, Side::Right) => {
-            todo!("composite for Bottom→Right when end node is not to the right of start")
-        }
+        (Side::Bottom, Side::Right) => ConnectorShape::NotImplemented(NotImplementedDetails {
+            from_rect: from.rect,
+            from_side,
+            to_rect: to.rect,
+            to_side,
+            start,
+            end,
+        }),
 
         // Bottom → Left
         //
@@ -936,23 +1006,48 @@ pub fn classify_shape(from: &Node, from_side: Side, to: &Node, to_side: Side) ->
             end,
             start_axis: Axis::Vertical,
         },
-        (Side::Bottom, Side::Left) => {
-            todo!("composite for Bottom→Left when end node is not to the left of start")
-        }
+        (Side::Bottom, Side::Left) => ConnectorShape::NotImplemented(NotImplementedDetails {
+            from_rect: from.rect,
+            from_side,
+            to_rect: to.rect,
+            to_side,
+            start,
+            end,
+        }),
 
         // Facing stubs that overlap or cross — not yet implemented.
-        (Side::Right, Side::Left) => {
-            todo!("composite C-Right + C-Left for Right→Left when start.x > end.x")
-        }
-        (Side::Left, Side::Right) => {
-            todo!("composite C-Left + C-Right for Left→Right when start.x < end.x")
-        }
-        (Side::Bottom, Side::Top) => {
-            todo!("composite C-Down + C-Up for Bottom→Top when start.y > end.y")
-        }
-        (Side::Top, Side::Bottom) => {
-            todo!("composite C-Up + C-Down for Top→Bottom when start.y < end.y")
-        }
+        (Side::Right, Side::Left) => ConnectorShape::NotImplemented(NotImplementedDetails {
+            from_rect: from.rect,
+            from_side,
+            to_rect: to.rect,
+            to_side,
+            start,
+            end,
+        }),
+        (Side::Left, Side::Right) => ConnectorShape::NotImplemented(NotImplementedDetails {
+            from_rect: from.rect,
+            from_side,
+            to_rect: to.rect,
+            to_side,
+            start,
+            end,
+        }),
+        (Side::Bottom, Side::Top) => ConnectorShape::NotImplemented(NotImplementedDetails {
+            from_rect: from.rect,
+            from_side,
+            to_rect: to.rect,
+            to_side,
+            start,
+            end,
+        }),
+        (Side::Top, Side::Bottom) => ConnectorShape::NotImplemented(NotImplementedDetails {
+            from_rect: from.rect,
+            from_side,
+            to_rect: to.rect,
+            to_side,
+            start,
+            end,
+        }),
 
         // Same-side cases are fully handled by the first arm above.
         (Side::Right, Side::Right)
@@ -966,16 +1061,33 @@ pub fn classify_shape(from: &Node, from_side: Side, to: &Node, to_side: Side) ->
 
 /// Builds the path for `edge`, returning a lazy [`PathIter`] of
 /// `(SPoint, PathSymbol)` pairs and the bounding [`SRect`] of the path.
-pub fn calculate_path(nodes: &[Node], edge: &Edge) -> Option<(PathIter, SRect)> {
-    let from_node = nodes.iter().find(|n| n.id == edge.from_id)?;
-    let to_node = nodes.iter().find(|n| n.id == edge.to_id)?;
+///
+/// # Errors
+///
+/// Returns [`PathError::NodeNotFound`] when either node referenced by the edge
+/// does not exist in `nodes`, or [`PathError::NotImplemented`] when the
+/// routing for this combination of sides / positions is not yet implemented.
+pub fn calculate_path(nodes: &[Node], edge: &Edge) -> Result<(PathIter, SRect), PathError> {
+    let from_node = nodes
+        .iter()
+        .find(|n| n.id == edge.from_id)
+        .ok_or(PathError::NodeNotFound)?;
+    let to_node = nodes
+        .iter()
+        .find(|n| n.id == edge.to_id)
+        .ok_or(PathError::NodeNotFound)?;
 
     let shape = classify_shape(from_node, edge.from_side, to_node, edge.to_side);
-    let (start, runs) = shape.into_runs();
 
+    // Surface NotImplemented before trying to build runs.
+    if let ConnectorShape::NotImplemented(details) = shape {
+        return Err(PathError::NotImplemented(details));
+    }
+
+    let (start, runs) = shape.into_runs();
     let bounds = bounds_from_runs(start, &runs);
     let iter = PathIter::new(start, runs, edge.dir);
-    Some((iter, bounds))
+    Ok((iter, bounds))
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────

@@ -6,7 +6,7 @@ use ratatui::{
 };
 
 use crate::labels::LabelIter;
-use crate::path::{self};
+use crate::path::{self, PathError};
 use crate::state::{BlockMode, Edge, Mode, Node, NodeId, Viewport};
 
 // ── Label pools ───────────────────────────────────────────────────────────────
@@ -137,34 +137,73 @@ fn render_nodes(frame: &mut Frame, nodes: &[Node], vp: &Viewport, mode: &Mode) {
 
 // ── Connection rendering ──────────────────────────────────────────────────────
 
-fn render_connections(frame: &mut Frame, nodes: &[Node], edges: &[Edge], vp: &Viewport) {
+/// Draw all edges and return one error string per unimplemented route so the
+/// caller can surface them in the error bar.
+fn render_connections(
+    frame: &mut Frame,
+    nodes: &[Node],
+    edges: &[Edge],
+    vp: &Viewport,
+) -> Vec<String> {
     use crate::path::PathSymbol;
 
+    let mut errors: Vec<String> = Vec::new();
+
     for edge in edges {
-        let Some((path_iter, _bounds)) = path::calculate_path(nodes, edge) else {
-            continue;
-        };
+        match path::calculate_path(nodes, edge) {
+            Ok((path_iter, _bounds)) => {
+                for (pt, sym) in path_iter {
+                    let (sx, sy) = to_screen(pt.x, pt.y, vp);
+                    if !in_frame(sx, sy, frame) {
+                        continue;
+                    }
 
-        for (pt, sym) in path_iter {
-            let (sx, sy) = to_screen(pt.x, pt.y, vp);
-            if !in_frame(sx, sy, frame) {
-                continue;
+                    // Arrowheads are drawn in yellow; line segments in white.
+                    let color = match sym {
+                        PathSymbol::ArrowRight
+                        | PathSymbol::ArrowLeft
+                        | PathSymbol::ArrowDown
+                        | PathSymbol::ArrowUp => Color::Yellow,
+                        _ => Color::White,
+                    };
+
+                    if let Some(cell) = frame.buffer_mut().cell_mut((sx as u16, sy as u16)) {
+                        cell.set_symbol(sym.to_symbol()).set_fg(color);
+                    }
+                }
             }
-
-            // Arrowheads are drawn in yellow; line segments in white.
-            let color = match sym {
-                PathSymbol::ArrowRight
-                | PathSymbol::ArrowLeft
-                | PathSymbol::ArrowDown
-                | PathSymbol::ArrowUp => Color::Yellow,
-                _ => Color::White,
-            };
-
-            if let Some(cell) = frame.buffer_mut().cell_mut((sx as u16, sy as u16)) {
-                cell.set_symbol(sym.to_symbol()).set_fg(color);
+            Err(PathError::NodeNotFound) => {
+                // One or both nodes are missing — nothing to draw.
+            }
+            Err(PathError::NotImplemented(details)) => {
+                errors.push(format!(
+                    "unimplemented route: {:?} → {:?}",
+                    details.from_side, details.to_side
+                ));
             }
         }
     }
+
+    errors
+}
+
+// ── Error bar ─────────────────────────────────────────────────────────────────
+
+/// Render routing errors as a single line at the very top of the frame.
+///
+/// Multiple errors are joined with `  |  `.  The bar is only drawn when there
+/// is at least one error.
+fn render_error_bar(frame: &mut Frame, errors: &[String]) {
+    if errors.is_empty() {
+        return;
+    }
+    let fa = frame.area();
+    let area = Rect::new(0, 0, fa.width, 1);
+    let text = errors.join("  |  ");
+    frame.render_widget(
+        Paragraph::new(text.as_str()).style(Style::default().fg(Color::Red)),
+        area,
+    );
 }
 
 // ── Selection label overlay ───────────────────────────────────────────────────
@@ -303,8 +342,9 @@ fn render_hint(frame: &mut Frame, mode: &Mode) {
 
 pub fn render_map(frame: &mut Frame, nodes: &[Node], edges: &[Edge], vp: &Viewport, mode: &Mode) {
     frame.render_widget(ratatui::widgets::Clear, frame.area());
-    render_connections(frame, nodes, edges, vp);
+    let path_errors = render_connections(frame, nodes, edges, vp);
     render_nodes(frame, nodes, vp, mode);
+    render_error_bar(frame, &path_errors);
     if let Mode::Selecting {
         labels, current, ..
     } = mode
