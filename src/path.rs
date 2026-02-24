@@ -520,6 +520,11 @@ pub enum ConnectorShape {
         end: SPoint,
         start_axis: Axis,
     },
+    Line {
+        start: SPoint,
+        dir: Dir,
+        len: u16,
+    },
     /// A composite of multiple primitive shapes chained end-to-end.
     ///
     /// The end point of each shape must equal the start point of the next.
@@ -662,7 +667,7 @@ impl ConnectorShape {
 pub fn classify_shape(from: &Node, from_side: Side, to: &Node, to_side: Side) -> ConnectorShape {
     let start = connection_point(from, from_side);
     let end = connection_point(to, to_side);
-    const DEFAULT_OFFSET: u16 = 2;
+    const DEFAULT_OFFSET: u16 = 1;
 
     match (from_side, to_side) {
         (from_side, to_side) if from_side == to_side => {
@@ -747,48 +752,101 @@ pub fn classify_shape(from: &Node, from_side: Side, to: &Node, to_side: Side) ->
 
         // Right → Top
         //
-        //         xxx
-        //    +--->xSx
-        //    |    xxx
-        //    |
-        //    |
-        //    |
         //   xxx
         //   xEx
         //   xxx
+        //    ^
+        //    |
+        //    +----xSx
+        //         xxx
+        //
         (Side::Right, Side::Top) if end.y < start.y => ConnectorShape::Corner {
             start,
             end,
             start_axis: Axis::Horizontal,
         },
-        (Side::Right, Side::Top) => {
-            todo!("composite for Right→Top when end node is not above start")
-        }
+
+        // Right → Top
+        //
+        //                +---+
+        //                |   |
+        //                |  xxx
+        //                c  xxx
+        //                |  xxx
+        //                |
+        //   xxx          |
+        //   xSx----------+
+        //   xxx
+        //
+        (Side::Right, Side::Top) if start.x <= end.x => ConnectorShape::Composite(Vec::from([
+            ConnectorShape::Corner {
+                start,
+                end: connection_point(to, Side::Left),
+                start_axis: Axis::Horizontal,
+            },
+            ConnectorShape::CShape {
+                start: connection_point(to, Side::Left),
+                end,
+                dir: Dir::Up,
+                offset: DEFAULT_OFFSET,
+            },
+        ])),
+
+        // Right → Top
+        //
+        //   +---------------+
+        //   |               |
+        //  xxx              |
+        //  xxx              |
+        //  xxx              |
+        //               xxx |
+        //               xSx-+
+        //               xxx
+        //
+        (Side::Right, Side::Top) if start.x > end.x => ConnectorShape::Composite(Vec::from([
+            ConnectorShape::Line {
+                start,
+                dir: Dir::Right,
+                len: DEFAULT_OFFSET,
+            },
+            ConnectorShape::CShape {
+                start: start + (DEFAULT_OFFSET as i32, 0),
+                end,
+                dir: Dir::Up,
+                offset: DEFAULT_OFFSET,
+            },
+        ])),
 
         // Right → Bottom
         //
-        //   xxx
-        //   xSx----+
-        //   xxx    |
-        //         xxx
-        //         xEx
-        //         xxx
+        //        xxx
+        //        xSx----+
+        //        xxx    |
+        //               |
+        //               v
+        //              xxx
+        //              xEx
+        //              xxx
+        //
         (Side::Right, Side::Bottom) if end.y > start.y => ConnectorShape::Corner {
             start,
             end,
             start_axis: Axis::Horizontal,
         },
+
         (Side::Right, Side::Bottom) => {
             todo!("composite for Right→Bottom when end node is not below start")
         }
 
-        // Left → Top  (corner, end node is above and to the left)
+        // Left → Top
         //
-        //   ^
-        //   |
-        //   xxx    +---xxx
-        //   xxx    |   xxx
-        //          +------  (continues leftward to start)
+        //         xxx
+        //         xEx
+        //         xxx
+        //          ^
+        //          |
+        //   xSx---+
+        //   xxx
         //
         (Side::Left, Side::Top) if end.y < start.y => ConnectorShape::Corner {
             start,
@@ -799,13 +857,15 @@ pub fn classify_shape(from: &Node, from_side: Side, to: &Node, to_side: Side) ->
             todo!("composite for Left→Top when end node is not above start")
         }
 
-        // Left → Bottom  (corner, end node is below and to the left)
+        // Left → Bottom
         //
-        //          +------  (continues leftward to start)
-        //   xxx    |   xxx
-        //   xxx    +---xxx
-        //   |
-        //   v
+        //   xSx
+        //   xxx---+
+        //         |
+        //         v
+        //        xxx
+        //        xEx
+        //        xxx
         //
         (Side::Left, Side::Bottom) if end.y > start.y => ConnectorShape::Corner {
             start,
@@ -816,14 +876,12 @@ pub fn classify_shape(from: &Node, from_side: Side, to: &Node, to_side: Side) ->
             todo!("composite for Left→Bottom when end node is not below start")
         }
 
-        // Top → Right  (corner, end node is to the right and above)
+        // Top → Right
         //
-        //   |        xxx---+
-        //   xxx      xxx   |
-        //   xxx            |
-        //   +------------->
-        //
-        // (vertical run first, then horizontal)
+        //    |
+        //   xSx        xxx
+        //   xxx         xEx
+        //    +---------->
         //
         (Side::Top, Side::Right) if end.x > start.x => ConnectorShape::Corner {
             start,
@@ -834,12 +892,12 @@ pub fn classify_shape(from: &Node, from_side: Side, to: &Node, to_side: Side) ->
             todo!("composite for Top→Right when end node is not to the right of start")
         }
 
-        // Top → Left  (corner, end node is to the left and above)
+        // Top → Left
         //
         //              |
-        //   +---xxx   xxx
-        //   |   xxx   xxx
-        //   <---------+
+        //   xxx        xSx
+        //   xEx        xxx
+        //   <----------+
         //
         (Side::Top, Side::Left) if end.x < start.x => ConnectorShape::Corner {
             start,
@@ -850,12 +908,12 @@ pub fn classify_shape(from: &Node, from_side: Side, to: &Node, to_side: Side) ->
             todo!("composite for Top→Left when end node is not to the left of start")
         }
 
-        // Bottom → Right  (corner, end node is to the right and below)
+        // Bottom → Right
         //
-        //   +------------->
-        //   xxx            |
-        //   xxx      xxx   |
-        //   |        xxx---+
+        //    +---------->
+        //   xSx        xxx
+        //   xxx         xEx
+        //    |
         //
         (Side::Bottom, Side::Right) if end.x > start.x => ConnectorShape::Corner {
             start,
@@ -866,12 +924,12 @@ pub fn classify_shape(from: &Node, from_side: Side, to: &Node, to_side: Side) ->
             todo!("composite for Bottom→Right when end node is not to the right of start")
         }
 
-        // Bottom → Left  (corner, end node is to the left and below)
+        // Bottom → Left
         //
-        //   <---------+
-        //   +---xxx   xxx
-        //   |   xxx   xxx
-        //              |
+        //   <----------+
+        //   xxx        xSx
+        //   xEx        xxx
+        //               |
         //
         (Side::Bottom, Side::Left) if end.x < start.x => ConnectorShape::Corner {
             start,
