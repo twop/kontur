@@ -7,7 +7,8 @@
 
 use crate::actions::Action;
 use crate::geometry::Dir;
-use crate::state::{AppState, BlockMode, Mode};
+use crate::geometry::SRect;
+use crate::state::{AppState, ArrowDecorations, BlockMode, Edge, Mode, Node, NodeId, Side};
 use crate::ui;
 
 // ── Result ────────────────────────────────────────────────────────────────────
@@ -146,6 +147,65 @@ pub fn update(state: &mut AppState, action: Action, frame_w: i32, frame_h: i32) 
         }
 
         // ── Mode transitions ──────────────────────────────────────────────────
+        Action::StartCreatingRelativeNode => {
+            if let Mode::SelectedBlock(id, _) = state.mode {
+                state.mode = Mode::SelectedBlock(id, BlockMode::CreatingRelativeNode);
+            }
+        }
+
+        Action::CreateRelativeNode(dir) => {
+            if let Mode::SelectedBlock(src_id, BlockMode::CreatingRelativeNode) = state.mode {
+                // Default size for every new node.
+                const NEW_W: u16 = 16;
+                const NEW_H: u16 = 5;
+                // Gap in cells between the source node border and the new node border.
+                const GAP: i32 = 2;
+
+                let new_rect = if let Some(src) = state.nodes.iter().find(|n| n.id == src_id) {
+                    let (nx, ny) = match dir {
+                        Dir::Right => (src.rect.right() + 1 + GAP, src.rect.origin.y),
+                        Dir::Left => (src.rect.left() - GAP - NEW_W as i32, src.rect.origin.y),
+                        Dir::Down => (src.rect.origin.x, src.rect.bottom() + 1 + GAP),
+                        Dir::Up => (src.rect.origin.x, src.rect.top() - GAP - NEW_H as i32),
+                    };
+                    Some(SRect::new(nx, ny, NEW_W, NEW_H))
+                } else {
+                    None
+                };
+
+                if let Some(rect) = new_rect {
+                    let (from_side, to_side) = match dir {
+                        Dir::Right => (Side::Right, Side::Left),
+                        Dir::Left => (Side::Left, Side::Right),
+                        Dir::Down => (Side::Bottom, Side::Top),
+                        Dir::Up => (Side::Top, Side::Bottom),
+                    };
+
+                    let new_id = NodeId(state.nodes.len());
+                    state.nodes.push(Node {
+                        id: new_id,
+                        rect,
+                        label: String::new(),
+                    });
+                    state.edges.push(Edge {
+                        from_id: src_id,
+                        from_side,
+                        to_id: new_id,
+                        to_side,
+                        dir: ArrowDecorations::Forward,
+                    });
+                    // Immediately enter editing mode on the new node.
+                    state.mode = Mode::SelectedBlock(
+                        new_id,
+                        BlockMode::Editing {
+                            input: String::new(),
+                            cursor: 0,
+                        },
+                    );
+                }
+            }
+        }
+
         Action::StartSelecting => {
             let labels = ui::assign_labels(&state.nodes, &state.vp, frame_w, frame_h);
             let prev = Box::new(state.mode.clone());
@@ -194,6 +254,10 @@ pub fn update(state: &mut AppState, action: Action, frame_w: i32, frame_h: i32) 
 
         Action::Cancel => match &state.mode {
             Mode::SelectedBlock(id, BlockMode::Editing { .. }) => {
+                let id = *id;
+                state.mode = Mode::SelectedBlock(id, BlockMode::Selected);
+            }
+            Mode::SelectedBlock(id, BlockMode::CreatingRelativeNode) => {
                 let id = *id;
                 state.mode = Mode::SelectedBlock(id, BlockMode::Selected);
             }

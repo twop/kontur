@@ -44,6 +44,7 @@ pub struct Viewport {
 pub enum BlockMode {
     Selected,
     // Moving,
+    CreatingRelativeNode,
     Resizing,
     Editing { input: String, cursor: usize },
 }

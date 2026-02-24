@@ -44,6 +44,12 @@ pub enum Action {
     /// A printable character was typed while in Selecting mode.
     SelectChar(char),
 
+    // ── CreatingRelativeNode ──────────────────────────────────────────────────
+    /// Enter "create relative node" sub-mode ('n' in Selected).
+    StartCreatingRelativeNode,
+    /// Spawn a new node adjacent to the selected node in the given direction.
+    CreateRelativeNode(Dir),
+
     // ── Application ───────────────────────────────────────────────────────────
     Quit,
 }
