@@ -5,6 +5,7 @@ pub mod labels;
 pub mod path;
 pub mod state;
 pub mod ui;
+pub mod update;
 
 use crossterm::event::KeyCode;
 use geometry::{SPoint, SRect};
