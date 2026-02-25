@@ -10,6 +10,7 @@ use crate::geometry::Dir;
 use crate::geometry::SRect;
 use crate::state::{AppState, ArrowDecorations, BlockMode, Edge, Mode, Node, NodeId, Side};
 use crate::ui;
+use ratatui::layout::Size;
 
 // ── Result ────────────────────────────────────────────────────────────────────
 
@@ -56,9 +57,9 @@ fn input_delete(input: &mut String, cursor: &mut usize) {
 // ── Core update function ──────────────────────────────────────────────────────
 
 /// Apply `action` to `state` and return whether the application should keep
-/// running.  `frame_w` / `frame_h` are needed by `StartSelecting` to compute
-/// which nodes are visible.
-pub fn update(state: &mut AppState, action: Action, frame_w: i32, frame_h: i32) -> UpdateResult {
+/// running.  `canvas_size` is needed by `StartSelecting` (visible-node labels)
+/// and `FocusSelected` (viewport centering).
+pub fn update(state: &mut AppState, action: Action, canvas_size: Size) -> UpdateResult {
     match action {
         // ── Application ───────────────────────────────────────────────────────
         Action::Quit => return UpdateResult::Quit,
@@ -212,7 +213,12 @@ pub fn update(state: &mut AppState, action: Action, frame_w: i32, frame_h: i32) 
         }
 
         Action::StartSelecting => {
-            let labels = ui::assign_labels(&state.nodes, &state.vp, frame_w, frame_h);
+            let labels = ui::assign_labels(
+                &state.nodes,
+                &state.vp,
+                canvas_size.width as i32,
+                canvas_size.height as i32,
+            );
             let prev = Box::new(state.mode.clone());
             state.mode = Mode::Selecting {
                 labels,
@@ -336,7 +342,9 @@ pub fn update(state: &mut AppState, action: Action, frame_w: i32, frame_h: i32) 
         Action::FocusSelected => {
             if let Mode::SelectedBlock(id, _) = state.mode {
                 if let Some(node) = state.nodes.iter().find(|n| n.id == id) {
-                    state.vp.center = node.rect.center();
+                    let c = node.rect.center();
+                    state.vp.center.x = c.x - canvas_size.width as i32 / 2;
+                    state.vp.center.y = c.y - canvas_size.height as i32 / 2;
                 }
             }
         }

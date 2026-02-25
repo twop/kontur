@@ -11,6 +11,7 @@ use std::collections::VecDeque;
 
 use crossterm::event::{KeyCode, KeyModifiers};
 use geometry::{SPoint, SRect};
+use ratatui::layout::Size;
 use state::{AppState, ArrowDecorations, BlockMode, Edge, Mode, Node, NodeId, Side, Viewport};
 use update::{update, UpdateResult};
 
@@ -136,9 +137,11 @@ fn main() -> color_eyre::Result<()> {
             if let crossterm::event::Event::Key(key) = crossterm::event::read()? {
                 key_log.insert(0, format_key(key.code, key.modifiers));
 
-                let size = terminal.size()?;
-                let fw = size.width as i32;
-                let fh = size.height as i32 - 1;
+                let term_size = terminal.size()?;
+                let canvas_size = Size {
+                    width: term_size.width,
+                    height: term_size.height - 1,
+                };
 
                 // Walk bindings in order; the first match wins.
                 let mut action = None;
@@ -174,7 +177,7 @@ fn main() -> color_eyre::Result<()> {
                     let mut quit = false;
                     let mut queue = VecDeque::from([a]);
                     while let Some(next) = queue.pop_front() {
-                        match update(&mut app, next, fw, fh) {
+                        match update(&mut app, next, canvas_size) {
                             UpdateResult::Quit => {
                                 quit = true;
                                 break;
