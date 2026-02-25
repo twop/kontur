@@ -27,10 +27,10 @@ pub fn assign_labels(
     let visible: Vec<NodeId> = nodes
         .iter()
         .filter(|n| {
-            let (sx, sy) = to_screen(n.rect.origin.x, n.rect.origin.y, vp);
+            let s = vp.to_screen(n.rect.origin);
             clip_to_frame(
-                sx,
-                sy,
+                s.x,
+                s.y,
                 n.rect.size.width as i32,
                 n.rect.size.height as i32,
                 frame_w,
@@ -48,10 +48,6 @@ pub fn assign_labels(
 }
 
 // ── Coordinate helpers ────────────────────────────────────────────────────────
-
-fn to_screen(canvas_x: i32, canvas_y: i32, vp: &Viewport) -> (i32, i32) {
-    (canvas_x - vp.center.x, canvas_y - vp.center.y)
-}
 
 fn in_frame(x: i32, y: i32, frame: &Frame) -> bool {
     let a = frame.area();
@@ -85,7 +81,9 @@ fn render_nodes(frame: &mut Frame, nodes: &[Node], vp: &Viewport, mode: &Mode) {
     let fh = frame.area().height as i32 - 1; // reserve last row for hint bar
 
     for node in nodes {
-        let (screen_x, screen_y) = to_screen(node.rect.origin.x, node.rect.origin.y, vp);
+        let screen = vp.to_screen(node.rect.origin);
+        let screen_x = screen.x;
+        let screen_y = screen.y;
         let nw = node.rect.size.width as i32;
         let nh = node.rect.size.height as i32;
 
@@ -156,7 +154,8 @@ fn render_connections(
         match path::calculate_path(nodes, edge) {
             Ok((path_iter, _bounds)) => {
                 for (pt, sym) in path_iter.take(100) {
-                    let (sx, sy) = to_screen(pt.x, pt.y, vp);
+                    let s = vp.to_screen(pt);
+                    let (sx, sy) = (s.x, s.y);
                     if !in_frame(sx, sy, frame) {
                         continue;
                     }
@@ -233,7 +232,8 @@ fn render_selection_labels(
             None => continue,
         };
 
-        let (sx, sy) = to_screen(node.rect.origin.x, node.rect.origin.y, vp);
+        let screen = vp.to_screen(node.rect.origin);
+        let (sx, sy) = (screen.x, screen.y);
         let (cx, cy, cw, ch) = match clip_to_frame(
             sx,
             sy,

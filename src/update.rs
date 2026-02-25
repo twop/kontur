@@ -6,8 +6,7 @@
 // Returns `UpdateResult` so the caller knows whether to keep running.
 
 use crate::actions::Action;
-use crate::geometry::Dir;
-use crate::geometry::SRect;
+use crate::geometry::{Dir, SPoint, SRect};
 use crate::state::{AppState, ArrowDecorations, BlockMode, Edge, Mode, Node, NodeId, Side};
 use crate::ui;
 use ratatui::layout::Size;
@@ -65,12 +64,16 @@ pub fn update(state: &mut AppState, action: Action, canvas_size: Size) -> Update
         Action::Quit => return UpdateResult::Quit,
 
         // ── Viewport panning (Normal mode) ────────────────────────────────────
-        Action::Pan(dir) => match dir {
-            Dir::Left => state.vp.center.x += 3,
-            Dir::Right => state.vp.center.x -= 3,
-            Dir::Up => state.vp.center.y += 3,
-            Dir::Down => state.vp.center.y -= 3,
-        },
+        Action::Pan(dir) => {
+            let mut t = state.vp.desired_center;
+            match dir {
+                Dir::Left => t.x += 3,
+                Dir::Right => t.x -= 3,
+                Dir::Up => t.y += 3,
+                Dir::Down => t.y -= 3,
+            }
+            state.vp.set_center(t);
+        }
 
         // ── Node movement ─────────────────────────────────────────────────────
         Action::Move(dir) => {
@@ -343,8 +346,11 @@ pub fn update(state: &mut AppState, action: Action, canvas_size: Size) -> Update
             if let Mode::SelectedBlock(id, _) = state.mode {
                 if let Some(node) = state.nodes.iter().find(|n| n.id == id) {
                     let c = node.rect.center();
-                    state.vp.center.x = c.x - canvas_size.width as i32 / 2;
-                    state.vp.center.y = c.y - canvas_size.height as i32 / 2;
+                    let target = SPoint::new(
+                        c.x - canvas_size.width as i32 / 2,
+                        c.y - canvas_size.height as i32 / 2,
+                    );
+                    state.vp.set_center(target);
                 }
             }
         }

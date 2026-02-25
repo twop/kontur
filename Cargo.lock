@@ -266,6 +266,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "damped-springs"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8d2a3565f30f45dc0e49196be8338fa9c47a14a92775aed7e349706c4fdc736d"
+dependencies = [
+ "num-traits",
+]
+
+[[package]]
 name = "darling"
 version = "0.23.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -614,6 +623,7 @@ version = "0.1.0"
 dependencies = [
  "color-eyre",
  "crossterm 0.28.1",
+ "damped-springs",
  "indoc",
  "ratatui",
 ]

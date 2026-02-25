@@ -1,6 +1,7 @@
 // ── Types ────────────────────────────────────────────────────────────────────
 
-use crate::geometry::{SPoint, SRect};
+use crate::geometry::SRect;
+pub use crate::viewport::{AnimationConfig, Viewport};
 
 #[derive(Clone, Copy, PartialEq)]
 pub struct NodeId(pub usize);
@@ -33,10 +34,6 @@ pub struct Edge {
     pub to_id: NodeId,
     pub to_side: Side,
     pub dir: ArrowDecorations,
-}
-
-pub struct Viewport {
-    pub center: SPoint,
 }
 
 // ── Application mode ──────────────────────────────────────────────────────────

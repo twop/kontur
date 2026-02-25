@@ -6,14 +6,17 @@ pub mod path;
 pub mod state;
 pub mod ui;
 pub mod update;
+pub mod viewport;
 
 use std::collections::VecDeque;
+use std::time::Instant;
 
 use crossterm::event::{KeyCode, KeyModifiers};
 use geometry::{SPoint, SRect};
 use ratatui::layout::Size;
-use state::{AppState, ArrowDecorations, BlockMode, Edge, Mode, Node, NodeId, Side, Viewport};
-use update::{update, UpdateResult};
+use state::{AppState, ArrowDecorations, BlockMode, Edge, Mode, Node, NodeId, Side};
+use update::{UpdateResult, update};
+use viewport::{AnimationConfig, Viewport};
 
 fn format_key(code: KeyCode, mods: KeyModifiers) -> String {
     let key = match code {
@@ -118,13 +121,24 @@ fn main() -> color_eyre::Result<()> {
     let mut app = AppState {
         nodes,
         edges,
-        vp: Viewport {
-            center: SPoint::new(0, 0),
-        },
+        vp: Viewport::new(
+            SPoint::new(0, 0),
+            AnimationConfig::Spring {
+                angular_freq: 10.0,
+                damping_ratio: 0.95,
+            },
+        ),
         mode: Mode::SelectedBlock(NodeId(0), BlockMode::Selected),
     };
 
+    let mut last_tick = Instant::now();
+
     loop {
+        let now = Instant::now();
+        let dt = now.duration_since(last_tick).as_secs_f32().min(0.1);
+        last_tick = now;
+        app.vp.tick(dt);
+
         let bindings = binding::bindings_for_mode(&app.mode);
 
         terminal.draw(|frame| {
