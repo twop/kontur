@@ -1,10 +1,10 @@
 use crossterm::event::KeyCode;
 use ratatui::{
-    Frame,
     layout::{Alignment, Constraint, Rect},
     style::{Color, Style},
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Cell, Clear, Paragraph, Row, Table},
+    Frame,
 };
 
 use crate::binding::Binding;

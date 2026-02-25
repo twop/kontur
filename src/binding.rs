@@ -210,7 +210,11 @@ pub fn bindings_for_mode(mode: &Mode) -> Vec<Binding> {
             ),
             Binding::single((KeyCode::Char('r'), StartResizing, "enter resize mode")),
             Binding::single((KeyCode::Char('i'), StartEditing, "edit label")),
-            Binding::single((KeyCode::Char('n'), StartCreatingRelativeNode, "create relative node")),
+            Binding::single((
+                KeyCode::Char('n'),
+                StartCreatingRelativeNode,
+                "create relative node",
+            )),
             Binding::single((KeyCode::Enter, StartSelecting, "jump to node")),
             Binding::single((KeyCode::Esc, Cancel, "deselect")),
         ],
@@ -220,10 +224,26 @@ pub fn bindings_for_mode(mode: &Mode) -> Vec<Binding> {
             Binding::group(
                 "Create",
                 [
-                    (KeyCode::Char('h'), CreateRelativeNode(Dir::Left), "create node to the left"),
-                    (KeyCode::Char('l'), CreateRelativeNode(Dir::Right), "create node to the right"),
-                    (KeyCode::Char('k'), CreateRelativeNode(Dir::Up), "create node above"),
-                    (KeyCode::Char('j'), CreateRelativeNode(Dir::Down), "create node below"),
+                    (
+                        KeyCode::Char('h'),
+                        CreateRelativeNode(Dir::Left),
+                        "create node to the left",
+                    ),
+                    (
+                        KeyCode::Char('l'),
+                        CreateRelativeNode(Dir::Right),
+                        "create node to the right",
+                    ),
+                    (
+                        KeyCode::Char('k'),
+                        CreateRelativeNode(Dir::Up),
+                        "create node above",
+                    ),
+                    (
+                        KeyCode::Char('j'),
+                        CreateRelativeNode(Dir::Down),
+                        "create node below",
+                    ),
                 ],
             ),
             Binding::single((KeyCode::Esc, Cancel, "cancel")),

@@ -13,10 +13,14 @@ use crate::ui;
 
 // ── Result ────────────────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UpdateResult {
     Continue,
     Quit,
+    /// Schedule a sequence of actions to be dispatched immediately after the
+    /// current one.  The caller processes them in order; each may itself return
+    /// `Actions(…)`, enabling arbitrarily-deep chaining.
+    Actions(Vec<Action>),
 }
 
 // ── Text-editing helpers ──────────────────────────────────────────────────────
@@ -61,10 +65,10 @@ pub fn update(state: &mut AppState, action: Action, frame_w: i32, frame_h: i32) 
 
         // ── Viewport panning (Normal mode) ────────────────────────────────────
         Action::Pan(dir) => match dir {
-            Dir::Left => state.vp.center.x -= 3,
-            Dir::Right => state.vp.center.x += 3,
-            Dir::Up => state.vp.center.y -= 3,
-            Dir::Down => state.vp.center.y += 3,
+            Dir::Left => state.vp.center.x += 3,
+            Dir::Right => state.vp.center.x -= 3,
+            Dir::Up => state.vp.center.y += 3,
+            Dir::Down => state.vp.center.y -= 3,
         },
 
         // ── Node movement ─────────────────────────────────────────────────────
@@ -202,6 +206,7 @@ pub fn update(state: &mut AppState, action: Action, frame_w: i32, frame_h: i32) 
                             cursor: 0,
                         },
                     );
+                    return UpdateResult::Actions(vec![Action::FocusSelected]);
                 }
             }
         }
@@ -327,6 +332,15 @@ pub fn update(state: &mut AppState, action: Action, frame_w: i32, frame_h: i32) 
             }
         }
 
+        // ── Viewport focus ────────────────────────────────────────────────────
+        Action::FocusSelected => {
+            if let Mode::SelectedBlock(id, _) = state.mode {
+                if let Some(node) = state.nodes.iter().find(|n| n.id == id) {
+                    state.vp.center = node.rect.center();
+                }
+            }
+        }
+
         // ── Label selection ───────────────────────────────────────────────────
         Action::SelectChar(ch) => {
             if let Mode::Selecting {
@@ -344,7 +358,7 @@ pub fn update(state: &mut AppState, action: Action, frame_w: i32, frame_h: i32) 
                 {
                     let matched_id = *matched_id;
                     state.mode = Mode::SelectedBlock(matched_id, BlockMode::Selected);
-                    return UpdateResult::Continue;
+                    return UpdateResult::Actions(vec![Action::FocusSelected]);
                 }
 
                 let any_partial = labels

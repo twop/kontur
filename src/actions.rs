@@ -6,7 +6,7 @@
 
 use crate::geometry::Dir;
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Action {
     // ── Viewport panning (Normal mode) ────────────────────────────────────────
     Pan(Dir),
@@ -49,6 +49,12 @@ pub enum Action {
     StartCreatingRelativeNode,
     /// Spawn a new node adjacent to the selected node in the given direction.
     CreateRelativeNode(Dir),
+
+    // ── Viewport ──────────────────────────────────────────────────────────────
+    /// Center the viewport on the currently selected node.
+    /// Not directly bindable; scheduled as a follow-up action by operations
+    /// that move focus to a new node (label jump, relative-node creation).
+    FocusSelected,
 
     // ── Application ───────────────────────────────────────────────────────────
     Quit,

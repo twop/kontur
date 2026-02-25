@@ -7,6 +7,8 @@ pub mod state;
 pub mod ui;
 pub mod update;
 
+use std::collections::VecDeque;
+
 use crossterm::event::{KeyCode, KeyModifiers};
 use geometry::{SPoint, SRect};
 use state::{AppState, ArrowDecorations, BlockMode, Edge, Mode, Node, NodeId, Side, Viewport};
@@ -169,7 +171,19 @@ fn main() -> color_eyre::Result<()> {
                 }
 
                 if let Some(a) = action {
-                    if update(&mut app, a, fw, fh) == UpdateResult::Quit {
+                    let mut quit = false;
+                    let mut queue = VecDeque::from([a]);
+                    while let Some(next) = queue.pop_front() {
+                        match update(&mut app, next, fw, fh) {
+                            UpdateResult::Quit => {
+                                quit = true;
+                                break;
+                            }
+                            UpdateResult::Continue => {}
+                            UpdateResult::Actions(follow_up) => queue.extend(follow_up),
+                        }
+                    }
+                    if quit {
                         break;
                     }
                 }
