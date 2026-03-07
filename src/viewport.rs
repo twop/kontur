@@ -1,30 +1,66 @@
 // ── Viewport ──────────────────────────────────────────────────────────────────
 //
-// Owns the camera position and optional spring-physics animation.
+// Owns the camera position and animation state.
+//
+// Two animation modes are supported and chosen per-call via `MoveKind`:
+//   - Spring  — damped spring physics; used for large jumps (FocusSelected).
+//               Feels natural for unknown distances; settles without overshoot.
+//   - Tween   — fixed-duration ExpoOut easing; used for incremental pan.
+//               Predictable arrival time; snappy on repeated key presses since
+//               each press restarts the tween from the current visual position.
 //
 // Coordinate contract:
-//   - `desired_center` is the *target* top-left canvas coordinate in i32.
-//   - When animation is enabled, `spring_x / spring_y` carry the floating-point
-//     animated position that approaches `desired_center` over time.
-//   - `to_screen` converts a canvas-space SPoint to a screen-space SPoint using
-//     the currently animated position (or the raw desired position when disabled).
+//   `desired_center` is the *target* top-left canvas coordinate (i32).
+//   `to_screen` converts a canvas-space SPoint to screen-space using whichever
+//   animation is currently active, or the raw desired position when idle.
 
 use crate::geometry::SPoint;
 use damped_springs::{Spring, SpringConfig, SpringParams, SpringTimeStep};
+use tween::Tweener;
 
 // ── Animation config ──────────────────────────────────────────────────────────
 
-/// Controls how the viewport animates toward a new target center.
+/// Selects which animation strategy to use for a particular `set_center` call.
 pub enum AnimationConfig {
-    /// Viewport snaps instantly; no spring math is performed.
+    /// Viewport snaps instantly; no animation is performed.
     Disabled,
-    /// Viewport animates using damped-spring physics.
+    /// Damped spring physics.  Good for large, distance-independent jumps.
     Spring {
         /// Higher values make the spring faster / stiffer.
         angular_freq: f32,
-        /// 0 = no damping (bouncy forever), 1 = critically damped, >1 = overdamped.
+        /// 0 = undamped, 1 = critically damped, >1 = overdamped (no bounce).
         damping_ratio: f32,
     },
+    /// Fixed-duration ExpoOut tween.  Good for incremental pan where the user
+    /// expects a predictable, snappy arrival.
+    Tween {
+        /// Duration of the tween in seconds.
+        duration: f32,
+    },
+}
+
+// ── Active animation state ────────────────────────────────────────────────────
+
+/// The animation that is currently running (if any).
+enum Active {
+    /// Spring simulation on each axis.
+    Spring {
+        spring_x: Spring<f32>,
+        spring_y: Spring<f32>,
+        params: SpringParams<f32>,
+    },
+    /// ExpoOut tweener on each axis, started from the animated position at the
+    /// moment `set_center` was called so mid-flight interruptions are seamless.
+    /// `pos_x` / `pos_y` cache the last value produced by `tick` so
+    /// `current_position` can be called from a shared reference.
+    Tween {
+        tween_x: Tweener<f32, f32, tween::ExpoOut>,
+        tween_y: Tweener<f32, f32, tween::ExpoOut>,
+        pos_x: f32,
+        pos_y: f32,
+    },
+    /// No animation running; `to_screen` uses `desired_center` directly.
+    None,
 }
 
 // ── Viewport ──────────────────────────────────────────────────────────────────
@@ -33,88 +69,139 @@ pub struct Viewport {
     /// Target position set by user actions (integer canvas coords).
     pub desired_center: SPoint,
 
-    /// Per-axis springs that animate toward `desired_center`.
-    /// Both springs start at rest at the initial position.
-    spring_x: Spring<f32>,
-    spring_y: Spring<f32>,
-
-    /// Pre-computed spring parameters (derived from `AnimationConfig::Spring`).
-    /// `None` when animation is `Disabled`.
-    params: Option<SpringParams<f32>>,
-
-    /// The animation mode in use.
-    pub animation: AnimationConfig,
+    /// Currently running animation (or `Active::None` when idle / disabled).
+    active: Active,
 }
 
 impl Viewport {
-    /// Create a new viewport centred on `center` with the given animation config.
-    /// The spring is initialised at rest *at* the initial center (no initial motion).
-    pub fn new(center: SPoint, animation: AnimationConfig) -> Self {
-        let params = match &animation {
-            AnimationConfig::Disabled => None,
+    /// Create a new viewport centred on `center` with no active animation.
+    pub fn new(center: SPoint) -> Self {
+        Self {
+            desired_center: center,
+            active: Active::None,
+        }
+    }
+
+    /// Set a new target center and start the appropriate animation.
+    ///
+    /// Always begins from the *current animated position* so interrupting a
+    /// running animation mid-flight looks seamless.
+    pub fn set_center(&mut self, target: SPoint, config: &AnimationConfig) {
+        let (from_x, from_y) = self.current_position();
+        self.desired_center = target;
+
+        match config {
+            AnimationConfig::Disabled => {
+                self.active = Active::None;
+            }
+
             AnimationConfig::Spring {
                 angular_freq,
                 damping_ratio,
             } => {
-                let config = SpringConfig::new(*angular_freq, *damping_ratio);
-                Some(SpringParams::from(config))
+                let cfg = SpringConfig::new(*angular_freq, *damping_ratio);
+                let params = SpringParams::from(cfg);
+
+                let tx = target.x as f32;
+                let ty = target.y as f32;
+
+                // Carry over velocity when interrupting another spring so the
+                // handoff is continuous; start from rest otherwise.
+                let (vel_x, vel_y) = match &self.active {
+                    Active::Spring {
+                        spring_x, spring_y, ..
+                    } => (spring_x.velocity, spring_y.velocity),
+                    _ => (0.0, 0.0),
+                };
+
+                let mut spring_x = Spring::new().with_position(from_x).with_equilibrium(tx);
+                spring_x.velocity = vel_x;
+
+                let mut spring_y = Spring::new().with_position(from_y).with_equilibrium(ty);
+                spring_y.velocity = vel_y;
+
+                self.active = Active::Spring {
+                    spring_x,
+                    spring_y,
+                    params,
+                };
             }
-        };
 
-        let cx = center.x as f32;
-        let cy = center.y as f32;
+            AnimationConfig::Tween { duration } => {
+                let tx = target.x as f32;
+                let ty = target.y as f32;
 
-        // Start the springs at rest, position == equilibrium == initial center.
-        let spring_x = Spring::new().with_position(cx).with_equilibrium(cx);
-        let spring_y = Spring::new().with_position(cy).with_equilibrium(cy);
-
-        Self {
-            desired_center: center,
-            spring_x,
-            spring_y,
-            params,
-            animation,
+                self.active = Active::Tween {
+                    tween_x: Tweener::expo_out(from_x, tx, *duration),
+                    tween_y: Tweener::expo_out(from_y, ty, *duration),
+                    pos_x: from_x,
+                    pos_y: from_y,
+                };
+            }
         }
     }
 
-    /// Set a new target center.
+    /// Advance the active animation by `dt` seconds.
     ///
-    /// Updates `desired_center` immediately and, when animation is enabled,
-    /// also updates the spring equilibriums so they start pulling toward the
-    /// new target on the next `tick`.
-    pub fn set_center(&mut self, target: SPoint) {
-        self.desired_center = target;
-        if self.params.is_some() {
-            self.spring_x.equilibrium = target.x as f32;
-            self.spring_y.equilibrium = target.y as f32;
-        }
-    }
-
-    /// Advance the spring simulation by `dt` seconds.
-    ///
-    /// Call this once per frame with the real wall-clock delta.  When animation
-    /// is `Disabled` this is a no-op.
+    /// Call once per frame with the real wall-clock delta.  No-op when no
+    /// animation is running.
     pub fn tick(&mut self, dt: f32) {
-        if let Some(params) = self.params {
-            let time_step = SpringTimeStep::new(params, dt);
-            self.spring_x.update(time_step);
-            self.spring_y.update(time_step);
+        match &mut self.active {
+            Active::Spring {
+                spring_x,
+                spring_y,
+                params,
+            } => {
+                let step = SpringTimeStep::new(*params, dt);
+                spring_x.update(step);
+                spring_y.update(step);
+
+                // Settle to rest when close enough to avoid perpetual tiny updates.
+                if (spring_x.position - spring_x.equilibrium).abs() < 0.01
+                    && (spring_y.position - spring_y.equilibrium).abs() < 0.01
+                    && spring_x.velocity.abs() < 0.01
+                    && spring_y.velocity.abs() < 0.01
+                {
+                    self.active = Active::None;
+                }
+            }
+
+            Active::Tween {
+                tween_x,
+                tween_y,
+                pos_x,
+                pos_y,
+            } => {
+                *pos_x = tween_x.move_by(dt);
+                *pos_y = tween_y.move_by(dt);
+                if tween_x.is_finished() && tween_y.is_finished() {
+                    self.active = Active::None;
+                }
+            }
+
+            Active::None => {}
         }
     }
 
-    /// Convert a canvas-space point to a screen-space point.
+    /// Convert a canvas-space point to a screen-space SPoint.
     ///
-    /// Uses the animated (spring) position when animation is enabled, or the
-    /// raw `desired_center` when disabled.  The result is in signed integer
-    /// screen coordinates and must be range-checked by the caller before use.
+    /// Uses the animated position when an animation is active, or the raw
+    /// `desired_center` otherwise.
     pub fn to_screen(&self, p: SPoint) -> SPoint {
-        let (cx, cy) = match self.params {
-            Some(_) => (
-                self.spring_x.position.round() as i32,
-                self.spring_y.position.round() as i32,
-            ),
-            None => (self.desired_center.x, self.desired_center.y),
-        };
-        SPoint::new(p.x - cx, p.y - cy)
+        let (cx, cy) = self.current_position();
+        SPoint::new(p.x - cx.round() as i32, p.y - cy.round() as i32)
+    }
+
+    // ── Private helpers ───────────────────────────────────────────────────────
+
+    /// Returns the current animated camera position as `(x, y)` floats.
+    fn current_position(&self) -> (f32, f32) {
+        match &self.active {
+            Active::Spring {
+                spring_x, spring_y, ..
+            } => (spring_x.position, spring_y.position),
+            Active::Tween { pos_x, pos_y, .. } => (*pos_x, *pos_y),
+            Active::None => (self.desired_center.x as f32, self.desired_center.y as f32),
+        }
     }
 }

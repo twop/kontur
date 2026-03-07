@@ -9,12 +9,11 @@ use crate::geometry::Dir;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Action {
     // ── Viewport panning (Normal mode) ────────────────────────────────────────
-    Pan(Dir),
+    Pan(Dir, u32),
 
     // ── Node movement (SelectedBlock / Selected) ──────────────────────────────
-    Move(Dir),
-    /// Move by a larger step (×5).
-    MoveFast(Dir),
+    /// Move the selected node by `amount` cells in the given direction.
+    Move(Dir, u32),
 
     // ── Resize mode ───────────────────────────────────────────────────────────
     /// Expand the selected node in the given direction.

@@ -155,10 +155,39 @@ pub fn bindings_for_mode(mode: &Mode) -> Vec<Binding> {
             Binding::group(
                 "Pan",
                 [
-                    (KeyCode::Char('h'), Pan(Dir::Left), "pan left"),
-                    (KeyCode::Char('l'), Pan(Dir::Right), "pan right"),
-                    (KeyCode::Char('k'), Pan(Dir::Up), "pan up"),
-                    (KeyCode::Char('j'), Pan(Dir::Down), "pan down"),
+                    (KeyCode::Char('h'), Pan(Dir::Left, 3), "pan left"),
+                    (KeyCode::Char('l'), Pan(Dir::Right, 3), "pan right"),
+                    (KeyCode::Char('k'), Pan(Dir::Up, 3), "pan up"),
+                    (KeyCode::Char('j'), Pan(Dir::Down, 3), "pan down"),
+                ],
+            ),
+            Binding::group(
+                "Pan Fast",
+                [
+                    (
+                        KeyCode::Char('H'),
+                        KeyModifiers::SHIFT,
+                        Pan(Dir::Left, 15),
+                        "pan left ×5",
+                    ),
+                    (
+                        KeyCode::Char('L'),
+                        KeyModifiers::SHIFT,
+                        Pan(Dir::Right, 15),
+                        "pan right ×5",
+                    ),
+                    (
+                        KeyCode::Char('K'),
+                        KeyModifiers::SHIFT,
+                        Pan(Dir::Up, 15),
+                        "pan up ×5",
+                    ),
+                    (
+                        KeyCode::Char('J'),
+                        KeyModifiers::SHIFT,
+                        Pan(Dir::Down, 15),
+                        "pan down ×5",
+                    ),
                 ],
             ),
             Binding::Single(BindingInstance::new(
@@ -173,10 +202,10 @@ pub fn bindings_for_mode(mode: &Mode) -> Vec<Binding> {
             Binding::group(
                 "Move",
                 [
-                    (KeyCode::Char('h'), Move(Dir::Left), "move left"),
-                    (KeyCode::Char('l'), Move(Dir::Right), "move right"),
-                    (KeyCode::Char('k'), Move(Dir::Up), "move up"),
-                    (KeyCode::Char('j'), Move(Dir::Down), "move down"),
+                    (KeyCode::Char('h'), Move(Dir::Left, 1), "move left"),
+                    (KeyCode::Char('l'), Move(Dir::Right, 1), "move right"),
+                    (KeyCode::Char('k'), Move(Dir::Up, 1), "move up"),
+                    (KeyCode::Char('j'), Move(Dir::Down, 1), "move down"),
                 ],
             ),
             Binding::group(
@@ -185,25 +214,25 @@ pub fn bindings_for_mode(mode: &Mode) -> Vec<Binding> {
                     (
                         KeyCode::Char('H'),
                         KeyModifiers::SHIFT,
-                        MoveFast(Dir::Left),
+                        Move(Dir::Left, 5),
                         "move left ×5",
                     ),
                     (
                         KeyCode::Char('L'),
                         KeyModifiers::SHIFT,
-                        MoveFast(Dir::Right),
+                        Move(Dir::Right, 5),
                         "move right ×5",
                     ),
                     (
                         KeyCode::Char('K'),
                         KeyModifiers::SHIFT,
-                        MoveFast(Dir::Up),
+                        Move(Dir::Up, 5),
                         "move up ×5",
                     ),
                     (
                         KeyCode::Char('J'),
                         KeyModifiers::SHIFT,
-                        MoveFast(Dir::Down),
+                        Move(Dir::Down, 5),
                         "move down ×5",
                     ),
                 ],

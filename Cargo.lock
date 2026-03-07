@@ -626,6 +626,7 @@ dependencies = [
  "damped-springs",
  "indoc",
  "ratatui",
+ "tween",
 ]
 
 [[package]]
@@ -1556,6 +1557,12 @@ dependencies = [
  "thread_local",
  "tracing-core",
 ]
+
+[[package]]
+name = "tween"
+version = "2.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "743bc0ff7445bbc1f3546419dd4912374be310f6ea80e43910478fe43bc480b9"
 
 [[package]]
 name = "typenum"

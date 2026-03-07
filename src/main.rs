@@ -15,8 +15,8 @@ use crossterm::event::{KeyCode, KeyModifiers};
 use geometry::{SPoint, SRect};
 use ratatui::layout::Size;
 use state::{AppState, ArrowDecorations, BlockMode, Edge, Mode, Node, NodeId, Side};
-use update::{UpdateResult, update};
-use viewport::{AnimationConfig, Viewport};
+use update::{update, UpdateResult};
+use viewport::Viewport;
 
 fn format_key(code: KeyCode, mods: KeyModifiers) -> String {
     let key = match code {
@@ -121,13 +121,7 @@ fn main() -> color_eyre::Result<()> {
     let mut app = AppState {
         nodes,
         edges,
-        vp: Viewport::new(
-            SPoint::new(0, 0),
-            AnimationConfig::Spring {
-                angular_freq: 10.0,
-                damping_ratio: 0.95,
-            },
-        ),
+        vp: Viewport::new(SPoint::new(0, 0)),
         mode: Mode::SelectedBlock(NodeId(0), BlockMode::Selected),
     };
 

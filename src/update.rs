@@ -9,7 +9,20 @@ use crate::actions::Action;
 use crate::geometry::{Dir, SPoint, SRect};
 use crate::state::{AppState, ArrowDecorations, BlockMode, Edge, Mode, Node, NodeId, Side};
 use crate::ui;
+use crate::viewport::AnimationConfig;
 use ratatui::layout::Size;
+
+// ── Per-action animation configs ──────────────────────────────────────────────
+
+/// ExpoOut tween for incremental pan (h/j/k/l): fast start, snappy arrival.
+const PAN_ANIM: AnimationConfig = AnimationConfig::Tween { duration: 0.15 };
+
+/// Damped spring for large camera jumps (FocusSelected): distance-independent
+/// settle with no overshoot.
+const JUMP_ANIM: AnimationConfig = AnimationConfig::Spring {
+    angular_freq: 10.0,
+    damping_ratio: 0.95,
+};
 
 // ── Result ────────────────────────────────────────────────────────────────────
 
@@ -64,39 +77,26 @@ pub fn update(state: &mut AppState, action: Action, canvas_size: Size) -> Update
         Action::Quit => return UpdateResult::Quit,
 
         // ── Viewport panning (Normal mode) ────────────────────────────────────
-        Action::Pan(dir) => {
+        Action::Pan(dir, amount) => {
             let mut t = state.vp.desired_center;
             match dir {
-                Dir::Left => t.x -= 3,
-                Dir::Right => t.x += 3,
-                Dir::Up => t.y -= 3,
-                Dir::Down => t.y += 3,
+                Dir::Left => t.x -= amount as i32,
+                Dir::Right => t.x += amount as i32,
+                Dir::Up => t.y -= amount as i32,
+                Dir::Down => t.y += amount as i32,
             }
-            state.vp.set_center(t);
+            state.vp.set_center(t, &PAN_ANIM);
         }
 
         // ── Node movement ─────────────────────────────────────────────────────
-        Action::Move(dir) => {
+        Action::Move(dir, amount) => {
             if let Mode::SelectedBlock(id, _) = state.mode {
                 if let Some(node) = state.nodes.iter_mut().find(|n| n.id == id) {
                     match dir {
-                        Dir::Left => node.rect.origin.x -= 1,
-                        Dir::Right => node.rect.origin.x += 1,
-                        Dir::Up => node.rect.origin.y -= 1,
-                        Dir::Down => node.rect.origin.y += 1,
-                    }
-                }
-            }
-        }
-
-        Action::MoveFast(dir) => {
-            if let Mode::SelectedBlock(id, _) = state.mode {
-                if let Some(node) = state.nodes.iter_mut().find(|n| n.id == id) {
-                    match dir {
-                        Dir::Left => node.rect.origin.x -= 5,
-                        Dir::Right => node.rect.origin.x += 5,
-                        Dir::Up => node.rect.origin.y -= 5,
-                        Dir::Down => node.rect.origin.y += 5,
+                        Dir::Left => node.rect.origin.x -= amount as i32,
+                        Dir::Right => node.rect.origin.x += amount as i32,
+                        Dir::Up => node.rect.origin.y -= amount as i32,
+                        Dir::Down => node.rect.origin.y += amount as i32,
                     }
                 }
             }
@@ -359,7 +359,7 @@ pub fn update(state: &mut AppState, action: Action, canvas_size: Size) -> Update
                         c.x - canvas_size.width as i32 / 2,
                         c.y - canvas_size.height as i32 / 2,
                     );
-                    state.vp.set_center(target);
+                    state.vp.set_center(target, &JUMP_ANIM);
                 }
             }
         }
