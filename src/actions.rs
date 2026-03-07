@@ -56,6 +56,10 @@ pub enum Action {
     /// that move focus to a new node (label jump, relative-node creation).
     FocusSelected,
 
+    // ── Shape deletion ────────────────────────────────────────────────────────
+    /// Delete the currently selected node and all edges connected to it.
+    DeleteShape,
+
     // ── Application ───────────────────────────────────────────────────────────
     Quit,
 }

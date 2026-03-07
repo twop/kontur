@@ -208,14 +208,15 @@ pub fn bindings_for_mode(mode: &Mode) -> Vec<Binding> {
                     ),
                 ],
             ),
-            Binding::single((KeyCode::Char('r'), StartResizing, "enter resize mode")),
+            Binding::single((KeyCode::Char('r'), StartResizing, "resize mode")),
             Binding::single((KeyCode::Char('i'), StartEditing, "edit label")),
+            Binding::single((KeyCode::Char('d'), DeleteShape, "delete")),
             Binding::single((
                 KeyCode::Char('n'),
                 StartCreatingRelativeNode,
-                "create relative node",
+                "new relative node",
             )),
-            Binding::single((KeyCode::Enter, StartSelecting, "jump to node")),
+            Binding::single((KeyCode::Enter, StartSelecting, "jump")),
             Binding::single((KeyCode::Esc, Cancel, "deselect")),
         ],
 

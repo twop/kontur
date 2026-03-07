@@ -67,10 +67,10 @@ pub fn update(state: &mut AppState, action: Action, canvas_size: Size) -> Update
         Action::Pan(dir) => {
             let mut t = state.vp.desired_center;
             match dir {
-                Dir::Left => t.x += 3,
-                Dir::Right => t.x -= 3,
-                Dir::Up => t.y += 3,
-                Dir::Down => t.y -= 3,
+                Dir::Left => t.x -= 3,
+                Dir::Right => t.x += 3,
+                Dir::Up => t.y -= 3,
+                Dir::Down => t.y += 3,
             }
             state.vp.set_center(t);
         }
@@ -338,6 +338,15 @@ pub fn update(state: &mut AppState, action: Action, canvas_size: Size) -> Update
             ) = state.mode
             {
                 *cursor = clamp_cursor(input, cursor.saturating_add(1));
+            }
+        }
+
+        // ── Shape deletion ────────────────────────────────────────────────────
+        Action::DeleteShape => {
+            if let Mode::SelectedBlock(id, _) = state.mode {
+                state.nodes.retain(|n| n.id != id);
+                state.edges.retain(|e| e.from_id != id && e.to_id != id);
+                state.mode = Mode::Normal;
             }
         }
 
