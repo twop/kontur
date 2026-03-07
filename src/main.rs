@@ -14,7 +14,7 @@ use std::time::Instant;
 use crossterm::event::{KeyCode, KeyModifiers};
 use geometry::{SPoint, SRect};
 use ratatui::layout::Size;
-use state::{AppState, ArrowDecorations, BlockMode, Edge, Mode, Node, NodeId, Side};
+use state::{AppState, ArrowDecorations, BlockMode, Edge, EdgeId, Mode, Node, NodeId, Side};
 use update::{update, UpdateResult};
 use viewport::Viewport;
 
@@ -72,6 +72,7 @@ fn make_demo_graph() -> (Vec<Node>, Vec<Edge>) {
 
     let edges = vec![
         Edge {
+            id: EdgeId(0),
             from_id: alpha,
             from_side: Side::Right,
             to_id: beta,
@@ -79,6 +80,7 @@ fn make_demo_graph() -> (Vec<Node>, Vec<Edge>) {
             dir: ArrowDecorations::Forward,
         },
         Edge {
+            id: EdgeId(1),
             from_id: beta,
             from_side: Side::Bottom,
             to_id: gamma,
@@ -86,6 +88,7 @@ fn make_demo_graph() -> (Vec<Node>, Vec<Edge>) {
             dir: ArrowDecorations::Forward,
         },
         Edge {
+            id: EdgeId(2),
             from_id: gamma,
             from_side: Side::Left,
             to_id: delta,
@@ -93,6 +96,7 @@ fn make_demo_graph() -> (Vec<Node>, Vec<Edge>) {
             dir: ArrowDecorations::Both,
         },
         Edge {
+            id: EdgeId(3),
             from_id: delta,
             from_side: Side::Top,
             to_id: beta,

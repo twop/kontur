@@ -5,6 +5,7 @@
 // these variants and then applies the resulting state change.
 
 use crate::geometry::Dir;
+use crate::state::EdgeId;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Action {
@@ -58,6 +59,12 @@ pub enum Action {
     // ── Shape deletion ────────────────────────────────────────────────────────
     /// Delete the currently selected node and all edges connected to it.
     DeleteShape,
+    /// Delete the currently selected edge (only valid in SelectedEdge mode).
+    DeleteEdge,
+
+    // ── Edge selection ────────────────────────────────────────────────────────
+    /// Transition to SelectedEdge mode for the given edge.
+    SelectEdge(EdgeId),
 
     // ── Application ───────────────────────────────────────────────────────────
     Quit,

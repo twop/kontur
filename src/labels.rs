@@ -34,8 +34,8 @@ enum Phase {
     /// Yielding two-character labels.
     /// `i` indexes into `double` (first char).
     /// `j` indexes into `single ∪ double` (second char):
-    ///   j < single.len()           → single[j]
-    ///   j >= single.len()          → double[j - single.len()]
+    //  -  j < single.len()           → single[`j`]
+    //  -  j >= single.len()          → double[`j` - single.len()]
     Double(usize, usize),
     /// Exhausted.
     Done,

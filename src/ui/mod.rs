@@ -10,21 +10,42 @@ use ratatui::{
 use crate::binding::Binding;
 use crate::labels::LabelIter;
 use crate::path::{self, PathError};
-use crate::state::{BlockMode, Edge, Mode, Node, NodeId, Viewport};
+use crate::state::{BlockMode, Edge, EdgeId, Mode, Node, NodeId, Viewport};
 
 // ── Label pools ───────────────────────────────────────────────────────────────
 
 static SINGLE_CHARS: &[char] = &['a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l'];
 static DOUBLE_CHARS: &[char] = &['e', 'r', 'u', 'i', 'o'];
 
-/// Assign labels to every node that is currently visible on screen.
-pub fn assign_labels(
+// ── Jump label assignment ─────────────────────────────────────────────────────
+
+/// Chebyshev distance between two canvas points.  Used to sort jump targets by
+/// proximity to the viewport centre so the shortest labels go to nearby items.
+fn chebyshev(a: crate::geometry::SPoint, b: crate::geometry::SPoint) -> i32 {
+    (a.x - b.x).abs().max((a.y - b.y).abs())
+}
+
+/// Assign jump labels to every visible node and edge, sorted by distance from
+/// the viewport centre (closest first, so shortest labels land on nearby items).
+///
+/// * Nodes are sorted by distance from their centre to `vp.desired_center`.
+/// * Edges are sorted by the distance of whichever connection point is closer
+///   (from or to) to `vp.desired_center`.
+///
+/// Returns separate vecs for nodes and edges so callers can look up either kind.
+pub fn assign_jump_labels(
     nodes: &[Node],
+    edges: &[Edge],
     vp: &Viewport,
     frame_w: i32,
     frame_h: i32,
-) -> Vec<(NodeId, String)> {
-    let visible: Vec<NodeId> = nodes
+) -> (Vec<(NodeId, String)>, Vec<(EdgeId, String)>) {
+    use crate::state::GraphId;
+
+    let center = vp.desired_center;
+
+    // ── Collect visible nodes ─────────────────────────────────────────────────
+    let mut items: Vec<(i32, GraphId)> = nodes
         .iter()
         .filter(|n| {
             let s = vp.to_screen(n.rect.origin);
@@ -38,13 +59,48 @@ pub fn assign_labels(
             )
             .is_some()
         })
-        .map(|n| n.id)
+        .map(|n| (chebyshev(n.rect.center(), center), GraphId::Node(n.id)))
         .collect();
 
-    LabelIter::new(SINGLE_CHARS, DOUBLE_CHARS)
-        .zip(visible)
-        .map(|(label, id)| (id, label))
-        .collect()
+    // ── Collect visible edges ─────────────────────────────────────────────────
+    for edge in edges {
+        let from_node = nodes.iter().find(|n| n.id == edge.from_id);
+        let to_node = nodes.iter().find(|n| n.id == edge.to_id);
+        if let (Some(from), Some(to)) = (from_node, to_node) {
+            let from_pt = path::connection_point(from, edge.from_side);
+            let to_pt = path::connection_point(to, edge.to_side);
+            // Use the closer of the two connection points as the sort key.
+            let dist = chebyshev(from_pt, center).min(chebyshev(to_pt, center));
+            // Only include the edge if at least one connection point is on screen.
+            let from_on = {
+                let s = vp.to_screen(from_pt);
+                s.x >= 0 && s.y >= 0 && s.x < frame_w && s.y < frame_h
+            };
+            let to_on = {
+                let s = vp.to_screen(to_pt);
+                s.x >= 0 && s.y >= 0 && s.x < frame_w && s.y < frame_h
+            };
+            if from_on || to_on {
+                items.push((dist, GraphId::Edge(edge.id)));
+            }
+        }
+    }
+
+    // ── Sort by distance, closest first ──────────────────────────────────────
+    items.sort_by_key(|(d, _)| *d);
+
+    // ── Assign labels from the shared pool ───────────────────────────────────
+    let mut node_labels: Vec<(NodeId, String)> = Vec::new();
+    let mut edge_labels: Vec<(EdgeId, String)> = Vec::new();
+
+    for (label, (_, id)) in LabelIter::new(SINGLE_CHARS, DOUBLE_CHARS).zip(items) {
+        match id {
+            GraphId::Node(nid) => node_labels.push((nid, label)),
+            GraphId::Edge(eid) => edge_labels.push((eid, label)),
+        }
+    }
+
+    (node_labels, edge_labels)
 }
 
 // ── Coordinate helpers ────────────────────────────────────────────────────────
@@ -140,17 +196,29 @@ fn render_nodes(frame: &mut Frame, nodes: &[Node], vp: &Viewport, mode: &Mode) {
 
 /// Draw all edges and return one error string per unimplemented route so the
 /// caller can surface them in the error bar.
+///
+/// The selected edge (if any is identified by `mode`) is rendered in yellow to
+/// match the selection colour used for nodes.
 fn render_connections(
     frame: &mut Frame,
     nodes: &[Node],
     edges: &[Edge],
     vp: &Viewport,
+    mode: &Mode,
 ) -> Vec<String> {
     use crate::path::PathSymbol;
+
+    let selected_edge_id = if let Mode::SelectedEdge(id) = mode {
+        Some(*id)
+    } else {
+        None
+    };
 
     let mut errors: Vec<String> = Vec::new();
 
     for edge in edges {
+        let is_selected = selected_edge_id == Some(edge.id);
+
         match path::calculate_path(nodes, edge) {
             Ok((path_iter, _bounds)) => {
                 for (pt, sym) in path_iter.take(100) {
@@ -160,13 +228,19 @@ fn render_connections(
                         continue;
                     }
 
-                    // Arrowheads are drawn in yellow; line segments in white.
-                    let color = match sym {
-                        PathSymbol::ArrowRight
-                        | PathSymbol::ArrowLeft
-                        | PathSymbol::ArrowDown
-                        | PathSymbol::ArrowUp => Color::Yellow,
-                        _ => Color::White,
+                    let color = if is_selected {
+                        // Selected edge: everything in yellow (matches node
+                        // selection colour).
+                        Color::Yellow
+                    } else {
+                        // Normal edge: arrowheads yellow, line segments white.
+                        match sym {
+                            PathSymbol::ArrowRight
+                            | PathSymbol::ArrowLeft
+                            | PathSymbol::ArrowDown
+                            | PathSymbol::ArrowUp => Color::Yellow,
+                            _ => Color::White,
+                        }
                     };
 
                     if let Some(cell) = frame.buffer_mut().cell_mut((sx as u16, sy as u16)) {
@@ -210,19 +284,57 @@ fn render_error_bar(frame: &mut Frame, errors: &[String]) {
 
 // ── Selection label overlay ───────────────────────────────────────────────────
 
+/// Render a single jump label at the given screen position.
+///
+/// The matched prefix (already typed) is shown in DarkGray; the remaining
+/// suffix is shown as bold black text on a cyan background.
+fn render_jump_label(frame: &mut Frame, label: &str, current: &str, label_x: u16, label_y: u16) {
+    use ratatui::style::Modifier;
+
+    if label_x >= frame.area().width || label_y >= frame.area().height {
+        return;
+    }
+
+    let matched_len = current.len();
+    let matched = &label[..matched_len];
+    let rest = &label[matched_len..];
+
+    let matched_style = Style::default().fg(Color::DarkGray);
+    let hint_style = Style::default()
+        .fg(Color::Black)
+        .bg(Color::Cyan)
+        .add_modifier(Modifier::BOLD);
+
+    let spans = vec![
+        Span::styled(matched, matched_style),
+        Span::styled(rest, hint_style),
+    ];
+
+    let label_w = label.chars().count() as u16;
+    let available_w = frame.area().width.saturating_sub(label_x);
+    let render_w = label_w.min(available_w);
+    if render_w == 0 {
+        return;
+    }
+
+    let area = Rect::new(label_x, label_y, render_w, 1);
+    frame.render_widget(Paragraph::new(Line::from(spans)), area);
+}
+
 fn render_selection_labels(
     frame: &mut Frame,
     nodes: &[Node],
+    edges: &[Edge],
     vp: &Viewport,
-    labels: &[(NodeId, String)],
+    node_labels: &[(NodeId, String)],
+    edge_labels: &[(EdgeId, String)],
     current: &str,
 ) {
-    use ratatui::style::Modifier;
-
     let fw = frame.area().width as i32;
     let fh = frame.area().height as i32 - 1;
 
-    for (id, label) in labels {
+    // ── Node labels ───────────────────────────────────────────────────────────
+    for (id, label) in node_labels {
         if !label.starts_with(current) {
             continue;
         }
@@ -253,37 +365,35 @@ fn render_selection_labels(
             continue;
         }
 
-        let label_x = (sx + 1) as u16;
-        let label_y = (sy + 1) as u16;
+        render_jump_label(frame, label, current, (sx + 1) as u16, (sy + 1) as u16);
+    }
 
-        if label_x >= frame.area().width || label_y >= frame.area().height {
+    // ── Edge labels ───────────────────────────────────────────────────────────
+    // Render at the from-connection point of the edge (the exit cell of the
+    // source node).  This is cheap — no path traversal required.
+    for (id, label) in edge_labels {
+        if !label.starts_with(current) {
             continue;
         }
 
-        let matched_len = current.len();
-        let matched = &label[..matched_len];
-        let rest = &label[matched_len..];
+        let edge = match edges.iter().find(|e| e.id == *id) {
+            Some(e) => e,
+            None => continue,
+        };
+        let from_node = match nodes.iter().find(|n| n.id == edge.from_id) {
+            Some(n) => n,
+            None => continue,
+        };
 
-        let matched_style = Style::default().fg(Color::DarkGray);
-        let hint_style = Style::default()
-            .fg(Color::Black)
-            .bg(Color::Yellow)
-            .add_modifier(Modifier::BOLD);
+        let anchor = path::connection_point(from_node, edge.from_side);
+        let screen = vp.to_screen(anchor);
+        let (sx, sy) = (screen.x, screen.y);
 
-        let spans = vec![
-            Span::styled(matched, matched_style),
-            Span::styled(rest, hint_style),
-        ];
-
-        let label_w = label.chars().count() as u16;
-        let available_w = frame.area().width.saturating_sub(label_x);
-        let render_w = label_w.min(available_w);
-        if render_w == 0 {
+        if sx < 0 || sy < 0 || sx >= fw || sy >= fh {
             continue;
         }
 
-        let area = Rect::new(label_x, label_y, render_w, 1);
-        frame.render_widget(Paragraph::new(Line::from(spans)), area);
+        render_jump_label(frame, label, current, sx as u16, sy as u16);
     }
 }
 
@@ -460,14 +570,17 @@ pub fn render_map(
     _key_log: &[String],
 ) {
     frame.render_widget(ratatui::widgets::Clear, frame.area());
-    let path_errors = render_connections(frame, nodes, edges, vp);
+    let path_errors = render_connections(frame, nodes, edges, vp, mode);
     render_nodes(frame, nodes, vp, mode);
     render_error_bar(frame, &path_errors);
     if let Mode::Selecting {
-        labels, current, ..
+        node_labels,
+        edge_labels,
+        current,
+        ..
     } = mode
     {
-        render_selection_labels(frame, nodes, vp, labels, current);
+        render_selection_labels(frame, nodes, edges, vp, node_labels, edge_labels, current);
     }
     render_hints_panel(frame, bindings);
     // render_key_log(frame, key_log);

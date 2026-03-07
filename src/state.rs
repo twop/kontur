@@ -3,8 +3,19 @@
 use crate::geometry::SRect;
 pub use crate::viewport::{AnimationConfig, Viewport};
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct NodeId(pub usize);
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct EdgeId(pub usize);
+
+/// Identifies either a node or an edge — used by the jump-label system to
+/// enumerate both kinds of graph elements in a single sorted list.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum GraphId {
+    Node(NodeId),
+    Edge(EdgeId),
+}
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Side {
@@ -29,6 +40,7 @@ pub struct Node {
 }
 
 pub struct Edge {
+    pub id: EdgeId,
     pub from_id: NodeId,
     pub from_side: Side,
     pub to_id: NodeId,
@@ -50,13 +62,16 @@ pub enum BlockMode {
 pub enum Mode {
     Normal,
     SelectedBlock(NodeId, BlockMode),
-    /// Jump-to-node selection mode (inspired by vimium/hop.nvim).
+    SelectedEdge(EdgeId),
+    /// Jump-to-node/edge selection mode (inspired by vimium/hop.nvim).
     ///
-    /// `labels`  — assignment of a label string to every visible node.
-    /// `current` — characters typed so far in this mode.
-    /// `prev`    — mode to return to on Esc or a dead sequence.
+    /// `node_labels` — label assigned to every visible node.
+    /// `edge_labels` — label assigned to every visible edge.
+    /// `current`     — characters typed so far in this mode.
+    /// `prev`        — mode to return to on Esc or a dead sequence.
     Selecting {
-        labels: Vec<(NodeId, String)>,
+        node_labels: Vec<(NodeId, String)>,
+        edge_labels: Vec<(EdgeId, String)>,
         current: String,
         prev: Box<Mode>,
     },

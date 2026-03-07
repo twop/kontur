@@ -7,7 +7,7 @@
 
 use crate::actions::Action;
 use crate::geometry::{Dir, SPoint, SRect};
-use crate::state::{AppState, ArrowDecorations, BlockMode, Edge, Mode, Node, NodeId, Side};
+use crate::state::{AppState, ArrowDecorations, BlockMode, Edge, EdgeId, Mode, Node, NodeId, Side};
 use crate::ui;
 use crate::viewport::AnimationConfig;
 use ratatui::layout::Size;
@@ -190,12 +190,14 @@ pub fn update(state: &mut AppState, action: Action, canvas_size: Size) -> Update
                     };
 
                     let new_id = NodeId(state.nodes.len());
+                    let new_edge_id = EdgeId(state.edges.len());
                     state.nodes.push(Node {
                         id: new_id,
                         rect,
                         label: String::new(),
                     });
                     state.edges.push(Edge {
+                        id: new_edge_id,
                         from_id: src_id,
                         from_side,
                         to_id: new_id,
@@ -216,15 +218,17 @@ pub fn update(state: &mut AppState, action: Action, canvas_size: Size) -> Update
         }
 
         Action::StartSelecting => {
-            let labels = ui::assign_labels(
+            let (node_labels, edge_labels) = ui::assign_jump_labels(
                 &state.nodes,
+                &state.edges,
                 &state.vp,
                 canvas_size.width as i32,
                 canvas_size.height as i32,
             );
             let prev = Box::new(state.mode.clone());
             state.mode = Mode::Selecting {
-                labels,
+                node_labels,
+                edge_labels,
                 current: String::new(),
                 prev,
             };
@@ -280,6 +284,9 @@ pub fn update(state: &mut AppState, action: Action, canvas_size: Size) -> Update
                 state.mode = Mode::SelectedBlock(id, BlockMode::Selected);
             }
             Mode::SelectedBlock(_, BlockMode::Selected) => {
+                state.mode = Mode::Normal;
+            }
+            Mode::SelectedEdge(_) => {
                 state.mode = Mode::Normal;
             }
             Mode::Selecting { prev, .. } => {
@@ -350,6 +357,19 @@ pub fn update(state: &mut AppState, action: Action, canvas_size: Size) -> Update
             }
         }
 
+        // ── Edge deletion ─────────────────────────────────────────────────────
+        Action::DeleteEdge => {
+            if let Mode::SelectedEdge(id) = state.mode {
+                state.edges.retain(|e| e.id != id);
+                state.mode = Mode::Normal;
+            }
+        }
+
+        // ── Edge selection ────────────────────────────────────────────────────
+        Action::SelectEdge(id) => {
+            state.mode = Mode::SelectedEdge(id);
+        }
+
         // ── Viewport focus ────────────────────────────────────────────────────
         Action::FocusSelected => {
             if let Mode::SelectedBlock(id, _) = state.mode {
@@ -367,7 +387,8 @@ pub fn update(state: &mut AppState, action: Action, canvas_size: Size) -> Update
         // ── Label selection ───────────────────────────────────────────────────
         Action::SelectChar(ch) => {
             if let Mode::Selecting {
-                ref mut labels,
+                ref mut node_labels,
+                ref mut edge_labels,
                 ref mut current,
                 ref prev,
             } = state.mode
@@ -376,17 +397,31 @@ pub fn update(state: &mut AppState, action: Action, canvas_size: Size) -> Update
                 let current_str = current.clone();
                 let prev_mode = *prev.clone();
 
+                // Check for an exact node label match.
                 if let Some((matched_id, _)) =
-                    labels.iter().find(|(_, label)| *label == current_str)
+                    node_labels.iter().find(|(_, label)| *label == current_str)
                 {
                     let matched_id = *matched_id;
                     state.mode = Mode::SelectedBlock(matched_id, BlockMode::Selected);
                     return UpdateResult::Actions(vec![Action::FocusSelected]);
                 }
 
-                let any_partial = labels
+                // Check for an exact edge label match.
+                if let Some((matched_id, _)) =
+                    edge_labels.iter().find(|(_, label)| *label == current_str)
+                {
+                    let matched_id = *matched_id;
+                    state.mode = Mode::SelectedEdge(matched_id);
+                    return UpdateResult::Continue;
+                }
+
+                // Cancel if no partial match remains for either nodes or edges.
+                let any_partial = node_labels
                     .iter()
-                    .any(|(_, label)| label.starts_with(current_str.as_str()));
+                    .any(|(_, label)| label.starts_with(current_str.as_str()))
+                    || edge_labels
+                        .iter()
+                        .any(|(_, label)| label.starts_with(current_str.as_str()));
 
                 if !any_partial {
                     state.mode = prev_mode;

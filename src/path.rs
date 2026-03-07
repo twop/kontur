@@ -80,7 +80,7 @@ pub enum Axis {
 // ── Connection / offset helpers ───────────────────────────────────────────────
 
 /// Returns the border cell on `side` of `node` where a connection line starts.
-fn connection_point(node: &Node, side: Side) -> SPoint {
+pub(crate) fn connection_point(node: &Node, side: Side) -> SPoint {
     match side {
         Side::Right => node.rect.mid_right() + (1, 0),
         Side::Left => node.rect.mid_left() - (1, 0),

@@ -150,6 +150,13 @@ pub fn bindings_for_mode(mode: &Mode) -> Vec<Binding> {
     use Action::*;
 
     let mut bindings: Vec<Binding> = match mode {
+        // ── SelectedEdge ──────────────────────────────────────────────────────
+        Mode::SelectedEdge(_) => vec![
+            Binding::single((KeyCode::Char('d'), DeleteEdge, "delete edge")),
+            Binding::single((KeyCode::Enter, StartSelecting, "jump")),
+            Binding::single((KeyCode::Esc, Cancel, "deselect")),
+        ],
+
         // ── Normal ────────────────────────────────────────────────────────────
         Mode::Normal => vec![
             Binding::group(
