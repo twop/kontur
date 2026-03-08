@@ -1,16 +1,16 @@
 use crossterm::event::KeyCode;
 use ratatui::{
+    Frame,
     layout::{Alignment, Constraint, Rect},
     style::{Color, Style},
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Cell, Clear, Paragraph, Row, Table},
-    Frame,
 };
 
-use crate::binding::Binding;
 use crate::labels::LabelIter;
 use crate::path::{self, PathError};
 use crate::state::{BlockMode, Edge, EdgeId, Mode, Node, NodeId, Viewport};
+use crate::{binding::Binding, geometry::SPoint};
 
 // ── Label pools ───────────────────────────────────────────────────────────────
 
@@ -263,6 +263,14 @@ fn render_connections(
     errors
 }
 
+fn get_connection_center(nodes: &[Node], edge: &Edge) -> Option<SPoint> {
+    let (path, _) = path::calculate_path(nodes, edge).ok()?;
+    let mut second_iter = path.clone();
+    let count = path.count();
+    let (mid_point, _) = second_iter.nth(count / 2)?;
+    Some(mid_point)
+}
+
 // ── Error bar ─────────────────────────────────────────────────────────────────
 
 /// Render routing errors as a single line at the very top of the frame.
@@ -344,7 +352,7 @@ fn render_selection_labels(
             None => continue,
         };
 
-        let screen = vp.to_screen(node.rect.origin);
+        let screen = vp.to_screen(node.rect.center());
         let (sx, sy) = (screen.x, screen.y);
         let (cx, cy, cw, ch) = match clip_to_frame(
             sx,
@@ -365,12 +373,10 @@ fn render_selection_labels(
             continue;
         }
 
-        render_jump_label(frame, label, current, (sx + 1) as u16, (sy + 1) as u16);
+        render_jump_label(frame, label, current, (sx) as u16, (sy) as u16);
     }
 
     // ── Edge labels ───────────────────────────────────────────────────────────
-    // Render at the from-connection point of the edge (the exit cell of the
-    // source node).  This is cheap — no path traversal required.
     for (id, label) in edge_labels {
         if !label.starts_with(current) {
             continue;
@@ -380,13 +386,12 @@ fn render_selection_labels(
             Some(e) => e,
             None => continue,
         };
-        let from_node = match nodes.iter().find(|n| n.id == edge.from_id) {
-            Some(n) => n,
-            None => continue,
+
+        let Some(center) = get_connection_center(nodes, edge) else {
+            continue;
         };
 
-        let anchor = path::connection_point(from_node, edge.from_side);
-        let screen = vp.to_screen(anchor);
+        let screen = vp.to_screen(center);
         let (sx, sy) = (screen.x, screen.y);
 
         if sx < 0 || sy < 0 || sx >= fw || sy >= fh {

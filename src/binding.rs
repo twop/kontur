@@ -153,7 +153,7 @@ pub fn bindings_for_mode(mode: &Mode) -> Vec<Binding> {
         // ── SelectedEdge ──────────────────────────────────────────────────────
         Mode::SelectedEdge(_) => vec![
             Binding::single((KeyCode::Char('d'), DeleteEdge, "delete edge")),
-            Binding::single((KeyCode::Enter, StartSelecting, "jump")),
+            Binding::single((KeyCode::Char('f'), StartSelecting, "jump")),
             Binding::single((KeyCode::Esc, Cancel, "deselect")),
         ],
 
@@ -162,45 +162,27 @@ pub fn bindings_for_mode(mode: &Mode) -> Vec<Binding> {
             Binding::group(
                 "Pan",
                 [
-                    (KeyCode::Char('h'), Pan(Dir::Left, 3), "pan left"),
-                    (KeyCode::Char('l'), Pan(Dir::Right, 3), "pan right"),
-                    (KeyCode::Char('k'), Pan(Dir::Up, 3), "pan up"),
-                    (KeyCode::Char('j'), Pan(Dir::Down, 3), "pan down"),
-                ],
+                    ('h', Dir::Left),
+                    ('l', Dir::Right),
+                    ('k', Dir::Up),
+                    ('j', Dir::Down),
+                ]
+                .map(|(key, dir)| (KeyCode::Char(key), Pan(dir, 5), "pan")),
             ),
             Binding::group(
                 "Pan Fast",
                 [
-                    (
-                        KeyCode::Char('H'),
-                        KeyModifiers::SHIFT,
-                        Pan(Dir::Left, 15),
-                        "pan left ×5",
-                    ),
-                    (
-                        KeyCode::Char('L'),
-                        KeyModifiers::SHIFT,
-                        Pan(Dir::Right, 15),
-                        "pan right ×5",
-                    ),
-                    (
-                        KeyCode::Char('K'),
-                        KeyModifiers::SHIFT,
-                        Pan(Dir::Up, 15),
-                        "pan up ×5",
-                    ),
-                    (
-                        KeyCode::Char('J'),
-                        KeyModifiers::SHIFT,
-                        Pan(Dir::Down, 15),
-                        "pan down ×5",
-                    ),
-                ],
+                    ('H', Dir::Left),
+                    ('L', Dir::Right),
+                    ('K', Dir::Up),
+                    ('J', Dir::Down),
+                ]
+                .map(|(key, dir)| (KeyCode::Char(key), KeyModifiers::SHIFT, Pan(dir, 10), "pan")),
             ),
             Binding::Single(BindingInstance::new(
                 KeyCode::Char('f'),
                 StartSelecting,
-                "jump to node",
+                "jump",
             )),
         ],
 
@@ -209,40 +191,29 @@ pub fn bindings_for_mode(mode: &Mode) -> Vec<Binding> {
             Binding::group(
                 "Move",
                 [
-                    (KeyCode::Char('h'), Move(Dir::Left, 1), "move left"),
-                    (KeyCode::Char('l'), Move(Dir::Right, 1), "move right"),
-                    (KeyCode::Char('k'), Move(Dir::Up, 1), "move up"),
-                    (KeyCode::Char('j'), Move(Dir::Down, 1), "move down"),
-                ],
+                    ('h', Dir::Left),
+                    ('l', Dir::Right),
+                    ('k', Dir::Up),
+                    ('j', Dir::Down),
+                ]
+                .map(|(key, dir)| (KeyCode::Char(key), Move(dir, 1), "move")),
             ),
             Binding::group(
                 "Move Fast",
                 [
+                    ('H', Dir::Left),
+                    ('L', Dir::Right),
+                    ('J', Dir::Down),
+                    ('K', Dir::Up),
+                ]
+                .map(|(key, dir)| {
                     (
-                        KeyCode::Char('H'),
+                        KeyCode::Char(key),
                         KeyModifiers::SHIFT,
-                        Move(Dir::Left, 5),
-                        "move left ×5",
-                    ),
-                    (
-                        KeyCode::Char('L'),
-                        KeyModifiers::SHIFT,
-                        Move(Dir::Right, 5),
-                        "move right ×5",
-                    ),
-                    (
-                        KeyCode::Char('K'),
-                        KeyModifiers::SHIFT,
-                        Move(Dir::Up, 5),
-                        "move up ×5",
-                    ),
-                    (
-                        KeyCode::Char('J'),
-                        KeyModifiers::SHIFT,
-                        Move(Dir::Down, 5),
-                        "move down ×5",
-                    ),
-                ],
+                        Move(dir, 5),
+                        "move fast",
+                    )
+                }),
             ),
             Binding::single((KeyCode::Char('r'), StartResizing, "resize mode")),
             Binding::single((KeyCode::Char('i'), StartEditing, "edit label")),
@@ -252,36 +223,21 @@ pub fn bindings_for_mode(mode: &Mode) -> Vec<Binding> {
                 StartCreatingRelativeNode,
                 "new relative node",
             )),
-            Binding::single((KeyCode::Enter, StartSelecting, "jump")),
+            Binding::single((KeyCode::Char('f'), StartSelecting, "jump")),
             Binding::single((KeyCode::Esc, Cancel, "deselect")),
         ],
 
         // ── SelectedBlock / CreatingRelativeNode ─────────────────────────────
         Mode::SelectedBlock(_, BlockMode::CreatingRelativeNode) => vec![
             Binding::group(
-                "Create",
+                "Create node",
                 [
-                    (
-                        KeyCode::Char('h'),
-                        CreateRelativeNode(Dir::Left),
-                        "create node to the left",
-                    ),
-                    (
-                        KeyCode::Char('l'),
-                        CreateRelativeNode(Dir::Right),
-                        "create node to the right",
-                    ),
-                    (
-                        KeyCode::Char('k'),
-                        CreateRelativeNode(Dir::Up),
-                        "create node above",
-                    ),
-                    (
-                        KeyCode::Char('j'),
-                        CreateRelativeNode(Dir::Down),
-                        "create node below",
-                    ),
-                ],
+                    ('h', Dir::Left),
+                    ('l', Dir::Right),
+                    ('k', Dir::Up),
+                    ('j', Dir::Down),
+                ]
+                .map(|(key, dir)| (KeyCode::Char(key), CreateRelativeNode(dir), "new node")),
             ),
             Binding::single((KeyCode::Esc, Cancel, "cancel")),
         ],
@@ -300,31 +256,19 @@ pub fn bindings_for_mode(mode: &Mode) -> Vec<Binding> {
             Binding::group(
                 "Shrink",
                 [
+                    ('H', Dir::Left),
+                    ('L', Dir::Right),
+                    ('K', Dir::Up),
+                    ('J', Dir::Down),
+                ]
+                .map(|(key, dir)| {
                     (
-                        KeyCode::Char('H'),
+                        KeyCode::Char(key),
                         KeyModifiers::SHIFT,
-                        Shrink(Dir::Left),
-                        "shrink left",
-                    ),
-                    (
-                        KeyCode::Char('L'),
-                        KeyModifiers::SHIFT,
-                        Shrink(Dir::Right),
-                        "shrink right",
-                    ),
-                    (
-                        KeyCode::Char('K'),
-                        KeyModifiers::SHIFT,
-                        Shrink(Dir::Up),
-                        "shrink up",
-                    ),
-                    (
-                        KeyCode::Char('J'),
-                        KeyModifiers::SHIFT,
-                        Shrink(Dir::Down),
-                        "shrink down",
-                    ),
-                ],
+                        Shrink(dir),
+                        "shrink",
+                    )
+                }),
             ),
             Binding::single((KeyCode::Esc, Cancel, "exit resize mode")),
         ],

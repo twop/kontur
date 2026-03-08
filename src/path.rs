@@ -385,6 +385,7 @@ fn bounds_from_runs(start: SPoint, runs: &[(Dir, u32)]) -> SRect {
 /// Constructed by [`calculate_path`].  Owns all required state so no lifetime
 /// is needed.  Corners are emitted *instead of* the straight-run cell at the
 /// bend point (no duplicate positions), and arrowheads are yielded last.
+#[derive(Clone)]
 pub struct PathIter {
     // ── fixed inputs ──────────────────────────────────────────────────────────
     runs: Vec<(Dir, u32)>,
