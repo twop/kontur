@@ -1,10 +1,10 @@
 use crossterm::event::KeyCode;
 use ratatui::{
+    Frame,
     layout::{Alignment, Constraint, Position, Rect},
     style::{Color, Style},
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Cell, Clear, Paragraph, Row, Table},
-    Frame,
 };
 
 use crate::geometry::{CanvasRect, SPoint, SRect};
@@ -15,7 +15,7 @@ use crate::state::{BlockMode, Edge, EdgeId, Mode, Node, NodeId, Viewport};
 // ── Node rendering ────────────────────────────────────────────────────────────
 
 fn render_nodes(frame: &mut Frame, nodes: &[Node], vp: &Viewport, mode: &Mode) {
-    let frame_canvas_rect = CanvasRect::from_center(vp.looking_at(), frame.area().as_size());
+    let frame_canvas_rect = CanvasRect::from_center(vp.animated_center(), frame.area().as_size());
 
     for node in nodes {
         let node_rect = node.rect;
@@ -92,7 +92,7 @@ fn render_connections(
     };
 
     let mut errors: Vec<String> = Vec::new();
-    let frame_rect = SRect::from_center(vp.looking_at(), frame.area().as_size());
+    let frame_rect = SRect::from_center(vp.animated_center(), frame.area().as_size());
 
     for edge in edges {
         let is_selected = selected_edge_id == Some(edge.id);
@@ -217,7 +217,7 @@ fn render_selection_labels(
     edge_labels: &[(EdgeId, String)],
     current: &str,
 ) {
-    let viewport_rect = CanvasRect::from_center(vp.looking_at(), frame.area().as_size());
+    let viewport_rect = CanvasRect::from_center(vp.animated_center(), frame.area().as_size());
     // ── Node labels ───────────────────────────────────────────────────────────
     for (id, label) in node_labels {
         if !label.starts_with(current) {
@@ -277,7 +277,7 @@ fn render_connect_labels(
     node_labels: &[(NodeId, String)],
     current: &str,
 ) {
-    let viewport_rect = CanvasRect::from_center(vp.looking_at(), frame.area().as_size());
+    let viewport_rect = CanvasRect::from_center(vp.animated_center(), frame.area().as_size());
 
     for (id, label) in node_labels {
         if *id == source_id {

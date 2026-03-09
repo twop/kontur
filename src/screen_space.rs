@@ -33,7 +33,7 @@ impl Screen {
     /// Uses the viewport's current animated position, falling back to
     /// `desired_center` when no animation is active.
     pub fn point(vp: &Viewport, p: SPoint<Canvas>) -> ViewportPoint {
-        let SPoint { x, y, .. } = vp.desired_center;
+        let SPoint { x, y, .. } = vp.animated_center();
         SPoint::new(p.x - x, p.y - y)
     }
 

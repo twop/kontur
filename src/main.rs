@@ -143,7 +143,11 @@ fn main() -> color_eyre::Result<()> {
             );
         })?;
 
-        if crossterm::event::poll(std::time::Duration::from_millis(50))? {
+        // Use a short timeout while an animation is running so the spring /
+        // tween renders smoothly (~60 fps).  Fall back to 50 ms when idle to
+        // avoid busy-looping when nothing is happening.
+        let poll_ms = if app.vp.is_animating() { 16 } else { 50 };
+        if crossterm::event::poll(std::time::Duration::from_millis(poll_ms))? {
             if let crossterm::event::Event::Key(key) = crossterm::event::read()? {
                 key_log.insert(0, format_key(key.code, key.modifiers));
 

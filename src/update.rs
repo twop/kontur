@@ -20,12 +20,12 @@ use ratatui::layout::Size;
 // ── Per-action animation configs ──────────────────────────────────────────────
 
 /// ExpoOut tween for incremental pan (h/j/k/l): fast start, snappy arrival.
-const PAN_ANIM: AnimationConfig = AnimationConfig::Tween { duration: 0.15 };
+const PAN_ANIM: AnimationConfig = AnimationConfig::Tween { duration: 0.25 };
 
 /// Damped spring for large camera jumps (FocusSelected): distance-independent
-/// settle with no overshoot.
+/// settle with a gentle overshoot that makes the movement legible.
 const JUMP_ANIM: AnimationConfig = AnimationConfig::Spring {
-    angular_freq: 10.0,
+    angular_freq: 6.0,
     damping_ratio: 0.95,
 };
 
@@ -56,7 +56,7 @@ fn assign_jump_labels(
     vp: &Viewport,
     frame_size: Size,
 ) -> (Vec<(NodeId, String)>, Vec<(EdgeId, String)>) {
-    let looking_at = vp.looking_at();
+    let looking_at = vp.animated_center();
     let viewport_rect = CanvasRect::from_center(looking_at, frame_size);
 
     // ── Collect visible nodes ─────────────────────────────────────────────────
@@ -110,7 +110,7 @@ fn assign_node_labels(
     vp: &Viewport,
     canvas_size: Size,
 ) -> Vec<(NodeId, String)> {
-    let center = vp.desired_center;
+    let center = vp.center();
     let viewport_rect = CanvasRect::from_center(center, canvas_size);
 
     let mut items: Vec<(i32, NodeId)> = nodes
@@ -243,7 +243,7 @@ pub fn update(state: &mut AppState, action: Action, canvas_size: Size) -> Update
 
         // ── Viewport panning (Normal mode) ────────────────────────────────────
         Action::Pan(dir, amount) => {
-            let mut t = state.vp.desired_center;
+            let mut t = state.vp.center();
             match dir {
                 Dir::Left => t.x -= amount as i32,
                 Dir::Right => t.x += amount as i32,
@@ -258,7 +258,7 @@ pub fn update(state: &mut AppState, action: Action, canvas_size: Size) -> Update
             const NEW_W: u16 = 16;
             const NEW_H: u16 = 5;
 
-            let rect = SRect::from_center(state.vp.desired_center, Size::new(NEW_W, NEW_H));
+            let rect = SRect::from_center(state.vp.center(), Size::new(NEW_W, NEW_H));
 
             let id = state.new_node_id();
             state.nodes.push(Node {
@@ -282,6 +282,10 @@ pub fn update(state: &mut AppState, action: Action, canvas_size: Size) -> Update
                         Dir::Down => node.rect.origin.y += amount as i32,
                     }
                 }
+                // Keep the viewport following the node if it drifts outside
+                // the safe zone.  FocusSelected already applies the boundary
+                // check, so this is a no-op when the node is well-centred.
+                return UpdateResult::Actions(vec![Action::FocusSelected]);
             }
         }
 
@@ -593,7 +597,21 @@ pub fn update(state: &mut AppState, action: Action, canvas_size: Size) -> Update
             if let Mode::SelectedBlock(id, _) = state.mode {
                 if let Some(node) = state.nodes.iter().find(|n| n.id == id) {
                     let target = node.rect.center();
-                    state.vp.set_center(target, &JUMP_ANIM);
+
+                    // Only jump when the focused node has drifted outside the
+                    // inner 50 % "safe zone" of the viewport.  This avoids
+                    // triggering a camera move every time the user selects a
+                    // node that is already roughly centered.
+                    let safe_w = ((canvas_size.width * 2) / 3).max(1);
+                    let safe_h = ((canvas_size.height * 2) / 3).max(1);
+                    let safe_zone = CanvasRect::from_center(
+                        state.vp.animated_center(),
+                        ratatui::layout::Size::new(safe_w, safe_h),
+                    );
+
+                    if !safe_zone.contains(target) {
+                        state.vp.set_center(target, &JUMP_ANIM);
+                    }
                 }
             }
         }

@@ -68,7 +68,7 @@ enum Active {
 
 pub struct Viewport {
     /// Target position set by user actions (integer canvas coords).
-    pub desired_center: SPoint,
+    desired_center: SPoint,
 
     /// Currently running animation (or `Active::None` when idle / disabled).
     active: Active,
@@ -189,7 +189,7 @@ impl Viewport {
     /// When an animation is running the float position is rounded to the
     /// nearest integer cell.  When settled (`Active::None`) the exact
     /// `desired_center` is returned directly, avoiding any rounding noise.
-    pub fn looking_at(&self) -> SPoint {
+    pub fn animated_center(&self) -> SPoint {
         match &self.active {
             Active::None => self.desired_center,
             _ => {
@@ -197,6 +197,27 @@ impl Viewport {
                 SPoint::new(x.round() as i32, y.round() as i32)
             }
         }
+    }
+
+    /// Returns the current camera center as a canvas `SPoint`.
+    ///
+    /// Note that it is independent of currently animated position
+    pub fn center(&self) -> SPoint {
+        match &self.active {
+            Active::None => self.desired_center,
+            _ => {
+                let (x, y) = self.current_position();
+                SPoint::new(x.round() as i32, y.round() as i32)
+            }
+        }
+    }
+
+    /// Returns `true` while an animation (spring or tween) is actively running.
+    ///
+    /// The caller can use this to shorten the event-poll timeout so that
+    /// in-flight animations are rendered at a smooth frame rate.
+    pub fn is_animating(&self) -> bool {
+        !matches!(self.active, Active::None)
     }
 
     // ── Crate-internal helpers ────────────────────────────────────────────────
