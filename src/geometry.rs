@@ -1,4 +1,16 @@
+use std::marker::PhantomData;
+
 use ratatui::layout::{Rect, Size};
+
+// ── Coordinate-space markers ───────────────────────────────────────────────────
+
+/// Marks coordinates that live in infinite canvas space.
+///
+/// This is the default space for `SPoint` and `SRect`.  All graph elements
+/// (nodes, edges, connection points) are stored in canvas space.
+pub struct Canvas;
+
+// ── Dir ───────────────────────────────────────────────────────────────────────
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Dir {
@@ -10,70 +22,84 @@ pub enum Dir {
 
 // ── SPoint ────────────────────────────────────────────────────────────────────
 
-/// A signed 2-D point in canvas or screen space.
+/// A signed 2-D point parameterised by coordinate space `S`.
+///
+/// The default space is [`Canvas`].  Use `SPoint<Screen>` (from
+/// `screen_space`) for terminal screen coordinates produced by the viewport
+/// projection.
 ///
 /// Uses `i32` to support a large canvas (±2 billion cells).
-/// Dimensions (width/height) stay `u16` because terminal sizes are small.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct SPoint {
+pub struct SPoint<S = Canvas> {
     pub x: i32,
     pub y: i32,
+    _space: PhantomData<S>,
 }
 
-impl SPoint {
+pub type CanvasPoint = SPoint;
+
+// Manual trait impls so the bounds don't leak to callers via `S: Clone` etc.
+impl<S> Clone for SPoint<S> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+impl<S> Copy for SPoint<S> {}
+impl<S> PartialEq for SPoint<S> {
+    fn eq(&self, other: &Self) -> bool {
+        self.x == other.x && self.y == other.y
+    }
+}
+impl<S> Eq for SPoint<S> {}
+impl<S> std::fmt::Debug for SPoint<S> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SPoint")
+            .field("x", &self.x)
+            .field("y", &self.y)
+            .finish()
+    }
+}
+
+impl<S> SPoint<S> {
     pub const fn new(x: i32, y: i32) -> Self {
-        Self { x, y }
+        Self {
+            x,
+            y,
+            _space: PhantomData,
+        }
     }
 
     /// Translate by `(dx, dy)`.
     pub const fn translate(self, dx: i32, dy: i32) -> Self {
-        Self {
-            x: self.x + dx,
-            y: self.y + dy,
-        }
+        Self::new(self.x + dx, self.y + dy)
     }
 
-    /// Component-wise subtraction — useful for converting canvas→screen coords.
-    pub const fn sub(self, other: SPoint) -> Self {
-        Self {
-            x: self.x - other.x,
-            y: self.y - other.y,
-        }
+    /// Component-wise subtraction.
+    pub const fn sub(self, other: SPoint<S>) -> Self {
+        Self::new(self.x - other.x, self.y - other.y)
     }
 
     /// Component-wise addition.
-    pub const fn add(self, other: SPoint) -> Self {
-        Self {
-            x: self.x + other.x,
-            y: self.y + other.y,
-        }
-    }
-
-    /// Returns `true` when this point lies within `[0, w) × [0, h)`.
-    pub fn in_bounds(self, w: i32, h: i32) -> bool {
-        self.x >= 0 && self.y >= 0 && self.x < w && self.y < h
+    pub const fn add(self, other: SPoint<S>) -> Self {
+        Self::new(self.x + other.x, self.y + other.y)
     }
 }
 
-impl From<(i32, i32)> for SPoint {
+impl<S> From<(i32, i32)> for SPoint<S> {
     fn from((x, y): (i32, i32)) -> Self {
-        Self { x, y }
+        Self::new(x, y)
     }
 }
 
-impl std::ops::Add<(i32, i32)> for SPoint {
-    type Output = SPoint;
+impl<S> std::ops::Add<(i32, i32)> for SPoint<S> {
+    type Output = SPoint<S>;
 
     fn add(self, (dx, dy): (i32, i32)) -> Self::Output {
-        Self {
-            x: self.x + dx,
-            y: self.y + dy,
-        }
+        Self::new(self.x + dx, self.y + dy)
     }
 }
 
-impl std::ops::Add<Dir> for SPoint {
-    type Output = SPoint;
+impl<S> std::ops::Add<Dir> for SPoint<S> {
+    type Output = SPoint<S>;
 
     fn add(self, dir: Dir) -> Self::Output {
         match dir {
@@ -85,52 +111,105 @@ impl std::ops::Add<Dir> for SPoint {
     }
 }
 
-impl std::ops::Sub<(i32, i32)> for SPoint {
-    type Output = SPoint;
+impl<S> std::ops::Sub<(i32, i32)> for SPoint<S> {
+    type Output = SPoint<S>;
 
     fn sub(self, (dx, dy): (i32, i32)) -> Self::Output {
-        Self {
-            x: self.x - dx,
-            y: self.y - dy,
-        }
+        Self::new(self.x - dx, self.y - dy)
     }
 }
 
 // ── SRect ─────────────────────────────────────────────────────────────────────
 
-/// A signed rectangle: top-left origin (canvas / screen coords) + ratatui `Size`.
+/// A signed rectangle parameterised by coordinate space `S`.
 ///
-/// The origin is `i32` to handle an arbitrarily large canvas; width/height
-/// remain `u16` because terminal dimensions are always small.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct SRect {
-    pub origin: SPoint,
+/// The default space is [`Canvas`].  The origin is `i32` to handle an
+/// arbitrarily large canvas; width/height remain `u16` because terminal
+/// dimensions are always small.
+pub struct SRect<S = Canvas> {
+    pub origin: SPoint<S>,
     pub size: Size,
+    _space: PhantomData<S>,
 }
 
-impl SRect {
+pub type CanvasRect = SRect<Canvas>;
+
+// Manual trait impls — same reason as SPoint.
+impl<S> Clone for SRect<S> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+impl<S> Copy for SRect<S> {}
+impl<S> PartialEq for SRect<S> {
+    fn eq(&self, other: &Self) -> bool {
+        self.origin == other.origin && self.size == other.size
+    }
+}
+impl<S> Eq for SRect<S> {}
+impl<S> std::fmt::Debug for SRect<S> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SRect")
+            .field("origin", &self.origin)
+            .field("size", &self.size)
+            .finish()
+    }
+}
+
+impl<S> SRect<S> {
     pub const fn new(x: i32, y: i32, width: u16, height: u16) -> Self {
         Self {
             origin: SPoint::new(x, y),
             size: Size { width, height },
+            _space: PhantomData,
         }
+    }
+
+    /// Create the smallest rect that contains both `a` and `b`.
+    ///
+    /// The two points are treated as opposite corners; the constructor handles
+    /// any ordering, so `from_two_points(p, q) == from_two_points(q, p)`.
+    pub fn from_two_points(a: SPoint<S>, b: SPoint<S>) -> Self {
+        let left = a.x.min(b.x);
+        let top = a.y.min(b.y);
+        let right = a.x.max(b.x);
+        let bottom = a.y.max(b.y);
+        Self::new(
+            left,
+            top,
+            (right - left + 1) as u16,
+            (bottom - top + 1) as u16,
+        )
+    }
+
+    /// Create a rect centered on `center` with the given `size`.
+    ///
+    /// The origin is shifted so that `center` falls on the rect's centre cell
+    /// (integer division, biased toward top-left for even dimensions).
+    pub fn from_center(center: SPoint<S>, size: Size) -> Self {
+        Self::new(
+            center.x - size.width as i32 / 2,
+            center.y - size.height as i32 / 2,
+            size.width,
+            size.height,
+        )
     }
 
     // ── Corner accessors ──────────────────────────────────────────────────────
 
-    pub const fn top_left(&self) -> SPoint {
+    pub const fn top_left(&self) -> SPoint<S> {
         self.origin
     }
 
-    pub fn top_right(&self) -> SPoint {
+    pub fn top_right(&self) -> SPoint<S> {
         SPoint::new(self.right(), self.origin.y)
     }
 
-    pub fn bottom_left(&self) -> SPoint {
+    pub fn bottom_left(&self) -> SPoint<S> {
         SPoint::new(self.origin.x, self.bottom())
     }
 
-    pub fn bottom_right(&self) -> SPoint {
+    pub fn bottom_right(&self) -> SPoint<S> {
         SPoint::new(self.right(), self.bottom())
     }
 
@@ -156,25 +235,25 @@ impl SRect {
 
     // ── Mid-edge points (used for edge connection points) ─────────────────────
 
-    pub fn mid_top(&self) -> SPoint {
+    pub fn mid_top(&self) -> SPoint<S> {
         SPoint::new(self.origin.x + self.size.width as i32 / 2, self.top())
     }
 
-    pub fn mid_bottom(&self) -> SPoint {
+    pub fn mid_bottom(&self) -> SPoint<S> {
         SPoint::new(self.origin.x + self.size.width as i32 / 2, self.bottom())
     }
 
-    pub fn mid_left(&self) -> SPoint {
+    pub fn mid_left(&self) -> SPoint<S> {
         SPoint::new(self.left(), self.origin.y + self.size.height as i32 / 2)
     }
 
-    pub fn mid_right(&self) -> SPoint {
+    pub fn mid_right(&self) -> SPoint<S> {
         SPoint::new(self.right(), self.origin.y + self.size.height as i32 / 2)
     }
 
     // ── Centre ────────────────────────────────────────────────────────────────
 
-    pub fn center(&self) -> SPoint {
+    pub fn center(&self) -> SPoint<S> {
         SPoint::new(
             self.origin.x + self.size.width as i32 / 2,
             self.origin.y + self.size.height as i32 / 2,
@@ -185,7 +264,7 @@ impl SRect {
 
     /// Extend this rect to be the smallest rect that contains both `self` and
     /// the given point `p`.  Returns a new `SRect`; `self` is unchanged.
-    pub fn extend_to(self, p: SPoint) -> Self {
+    pub fn extend_to(self, p: SPoint<S>) -> Self {
         let new_left = self.left().min(p.x);
         let new_top = self.top().min(p.y);
         let new_right = self.right().max(p.x);
@@ -200,50 +279,32 @@ impl SRect {
 
     // ── Containment & clipping ────────────────────────────────────────────────
 
-    pub fn contains(&self, p: SPoint) -> bool {
+    pub fn contains(&self, p: SPoint<S>) -> bool {
         p.x >= self.left() && p.x <= self.right() && p.y >= self.top() && p.y <= self.bottom()
     }
 
-    /// Clip `self` against a frame rectangle `[0, fw) × [0, fh)`.
+    /// Clip `self` against another rect in the same coordinate space
     ///
     /// Returns `None` if the rect is entirely outside the frame.
-    pub fn clip_to_frame(&self, fw: i32, fh: i32) -> Option<SRect> {
-        let x1 = self.left();
-        let y1 = self.top();
-        let x2 = self.left() + self.size.width as i32;
-        let y2 = self.top() + self.size.height as i32;
-
-        if x1 >= fw || x2 <= 0 || y1 >= fh || y2 <= 0 {
+    pub fn clip_by(&self, clip_rect: SRect<S>) -> Option<SRect<S>> {
+        if self.left() >= clip_rect.right()
+            || self.top() >= clip_rect.bottom()
+            || self.right() <= clip_rect.left()
+            || self.bottom() <= clip_rect.top()
+        {
             return None;
         }
 
-        let cx1 = x1.max(0);
-        let cy1 = y1.max(0);
-        let cx2 = x2.min(fw);
-        let cy2 = y2.min(fh);
+        let left = self.left().max(clip_rect.left());
+        let right = self.right().min(clip_rect.right());
 
-        Some(SRect::new(cx1, cy1, (cx2 - cx1) as u16, (cy2 - cy1) as u16))
-    }
+        let top = self.top().max(clip_rect.top());
+        let bottom = self.bottom().min(clip_rect.bottom());
 
-    /// Translate origin by a viewport offset (canvas → screen).
-    pub fn to_screen(&self, vp_origin: SPoint) -> SRect {
-        SRect {
-            origin: self.origin.sub(vp_origin),
-            size: self.size,
-        }
-    }
-
-    // ── Conversions ───────────────────────────────────────────────────────────
-
-    /// Convert to a ratatui `Rect`. Panics in debug if origin is negative.
-    pub fn to_rect(&self) -> Rect {
-        debug_assert!(self.origin.x >= 0 && self.origin.y >= 0);
-        Rect::new(
-            self.origin.x as u16,
-            self.origin.y as u16,
-            self.size.width,
-            self.size.height,
-        )
+        Some(SRect::from_two_points(
+            SPoint::new(left, top),
+            SPoint::new(right, bottom),
+        ))
     }
 }
 
@@ -259,39 +320,26 @@ impl From<Rect> for SRect {
 mod tests {
     use super::*;
 
-    fn rect() -> SRect {
-        // origin (4, 6), width 10, height 6  →  right=13, bottom=11
-        SRect::new(4, 6, 10, 6)
-    }
-
     // ── SPoint ────────────────────────────────────────────────────────────────
 
     #[test]
     fn spoint_offset() {
-        let p = SPoint::new(2, 3);
+        let p = SPoint::<Canvas>::new(2, 3);
         assert_eq!(p.translate(1, -1), SPoint::new(3, 2));
     }
 
     #[test]
     fn spoint_add_sub() {
-        let a = SPoint::new(5, 7);
+        let a = SPoint::<Canvas>::new(5, 7);
         let b = SPoint::new(2, 3);
         assert_eq!(a.add(b), SPoint::new(7, 10));
         assert_eq!(a.sub(b), SPoint::new(3, 4));
     }
 
     #[test]
-    fn spoint_in_bounds() {
-        let p = SPoint::new(3, 4);
-        assert!(p.in_bounds(10, 10));
-        assert!(!p.in_bounds(3, 10)); // x == w  →  out
-        assert!(!SPoint::new(-1, 0).in_bounds(10, 10));
-    }
-
-    #[test]
     fn spoint_large_canvas() {
         // Verify i32 handles coordinates well beyond i16::MAX (32767)
-        let p = SPoint::new(100_000, -50_000);
+        let p = SPoint::<Canvas>::new(100_000, -50_000);
         assert_eq!(p.translate(-100_000, 50_000), SPoint::new(0, 0));
     }
 
@@ -299,29 +347,35 @@ mod tests {
 
     #[test]
     fn top_left() {
-        assert_eq!(rect().top_left(), SPoint::new(4, 6));
+        assert_eq!(CanvasRect::new(4, 6, 10, 6).top_left(), SPoint::new(4, 6));
     }
 
     #[test]
     fn top_right() {
-        assert_eq!(rect().top_right(), SPoint::new(13, 6));
+        assert_eq!(CanvasRect::new(4, 6, 10, 6).top_right(), SPoint::new(13, 6));
     }
 
     #[test]
     fn bottom_left() {
-        assert_eq!(rect().bottom_left(), SPoint::new(4, 11));
+        assert_eq!(
+            CanvasRect::new(4, 6, 10, 6).bottom_left(),
+            SPoint::new(4, 11)
+        );
     }
 
     #[test]
     fn bottom_right() {
-        assert_eq!(rect().bottom_right(), SPoint::new(13, 11));
+        assert_eq!(
+            CanvasRect::new(4, 6, 10, 6).bottom_right(),
+            SPoint::new(13, 11)
+        );
     }
 
     // ── SRect edges ───────────────────────────────────────────────────────────
 
     #[test]
     fn left_right_top_bottom() {
-        let r = rect();
+        let r = CanvasRect::new(4, 6, 10, 6);
         assert_eq!(r.left(), 4);
         assert_eq!(r.right(), 13);
         assert_eq!(r.top(), 6);
@@ -332,7 +386,7 @@ mod tests {
 
     #[test]
     fn mid_edges() {
-        let r = rect(); // width=10 → midx=4+5=9; height=6 → midy=6+3=9
+        let r = CanvasRect::new(4, 6, 10, 6); // width=10 → midx=4+5=9; height=6 → midy=6+3=9
         assert_eq!(r.mid_top(), SPoint::new(9, 6));
         assert_eq!(r.mid_bottom(), SPoint::new(9, 11));
         assert_eq!(r.mid_left(), SPoint::new(4, 9));
@@ -344,91 +398,147 @@ mod tests {
     #[test]
     fn center() {
         // width=10 → x+5=9; height=6 → y+3=9
-        assert_eq!(rect().center(), SPoint::new(9, 9));
+        assert_eq!(CanvasRect::new(4, 6, 10, 6).center(), SPoint::new(9, 9));
+    }
+
+    #[test]
+    fn from_center() {
+        // Even dimensions: center=(10,8), size=(6,4) → origin=(7,6)
+        let r = CanvasRect::from_center(
+            SPoint::new(10, 8),
+            Size {
+                width: 6,
+                height: 4,
+            },
+        );
+        assert_eq!(r.origin, SPoint::new(7, 6));
+        assert_eq!(
+            r.size,
+            Size {
+                width: 6,
+                height: 4
+            }
+        );
+        assert_eq!(r.center(), SPoint::new(10, 8));
+
+        // Odd dimensions: center=(5,5), size=(5,3) → origin=(3,4)
+        let r2 = CanvasRect::from_center(
+            SPoint::new(5, 5),
+            Size {
+                width: 5,
+                height: 3,
+            },
+        );
+        assert_eq!(r2.origin, SPoint::new(3, 4));
+        assert_eq!(r2.center(), SPoint::new(5, 5));
     }
 
     // ── Contains ──────────────────────────────────────────────────────────────
 
     #[test]
     fn contains_inside() {
-        assert!(rect().contains(SPoint::new(8, 8)));
+        assert!(CanvasRect::new(4, 6, 10, 6).contains(SPoint::new(8, 8)));
     }
 
     #[test]
     fn contains_on_border() {
-        let r = rect();
+        let r = CanvasRect::new(4, 6, 10, 6);
         assert!(r.contains(r.top_left()));
         assert!(r.contains(r.bottom_right()));
     }
 
     #[test]
     fn contains_outside() {
-        assert!(!rect().contains(SPoint::new(0, 0)));
-        assert!(!rect().contains(SPoint::new(14, 9)));
+        assert!(!CanvasRect::new(4, 6, 10, 6).contains(SPoint::new(0, 0)));
+        assert!(!CanvasRect::new(4, 6, 10, 6).contains(SPoint::new(14, 9)));
     }
 
     // ── Clip ──────────────────────────────────────────────────────────────────
 
     #[test]
     fn clip_fully_visible() {
-        let r = SRect::new(2, 2, 4, 3);
-        assert_eq!(r.clip_to_frame(20, 20), Some(r));
+        let r = CanvasRect::new(2, 2, 4, 3);
+        assert_eq!(r.clip_by(SRect::new(0, 0, 20, 20)), Some(r));
     }
 
     #[test]
     fn clip_partial_left() {
-        // origin at x=-2, width=6 → visible columns 0..4
-        let r = SRect::new(-2, 0, 6, 3);
-        let clipped = r.clip_to_frame(20, 20).unwrap();
+        // origin at x=-2, width=6 → visible columns 0..3 (width 4)
+        let r = CanvasRect::new(-2, 0, 6, 3);
+        let clipped = r.clip_by(SRect::new(0, 0, 20, 20)).unwrap();
         assert_eq!(clipped.left(), 0);
         assert_eq!(clipped.size.width, 4);
     }
 
     #[test]
     fn clip_partial_right() {
-        let r = SRect::new(18, 0, 6, 3);
-        let clipped = r.clip_to_frame(20, 20).unwrap();
+        // origin at x=18, width=6 → visible columns 18..19 (width 2)
+        let r = CanvasRect::new(18, 0, 6, 3);
+        let clipped = r.clip_by(SRect::new(0, 0, 20, 20)).unwrap();
         assert_eq!(clipped.right(), 19);
         assert_eq!(clipped.size.width, 2);
     }
 
     #[test]
+    fn clip_partial_top() {
+        // origin at y=-3, height=5 → visible rows 0..1 (height 2)
+        let r = CanvasRect::new(0, -3, 4, 5);
+        let clipped = r.clip_by(SRect::new(0, 0, 20, 20)).unwrap();
+        assert_eq!(clipped.top(), 0);
+        assert_eq!(clipped.size.height, 2);
+    }
+
+    #[test]
+    fn clip_partial_bottom() {
+        // origin at y=18, height=5 → visible rows 18..19 (height 2)
+        let r = CanvasRect::new(0, 18, 4, 5);
+        let clipped = r.clip_by(SRect::new(0, 0, 20, 20)).unwrap();
+        assert_eq!(clipped.bottom(), 19);
+        assert_eq!(clipped.size.height, 2);
+    }
+
+    #[test]
     fn clip_entirely_off_left() {
-        let r = SRect::new(-10, 0, 4, 3);
-        assert_eq!(r.clip_to_frame(20, 20), None);
+        let r = CanvasRect::new(-10, 0, 4, 3);
+        assert_eq!(r.clip_by(SRect::new(0, 0, 20, 20)), None);
     }
 
     #[test]
     fn clip_entirely_off_right() {
-        let r = SRect::new(22, 0, 4, 3);
-        assert_eq!(r.clip_to_frame(20, 20), None);
-    }
-
-    // ── to_screen / to_rect ───────────────────────────────────────────────────
-
-    #[test]
-    fn to_screen_translates_origin() {
-        let r = SRect::new(10, 8, 4, 3);
-        let vp = SPoint::new(3, 2);
-        let s = r.to_screen(vp);
-        assert_eq!(s.origin, SPoint::new(7, 6));
-        assert_eq!(s.size, r.size);
+        let r = CanvasRect::new(22, 0, 4, 3);
+        assert_eq!(r.clip_by(SRect::new(0, 0, 20, 20)), None);
     }
 
     #[test]
-    fn to_rect_round_trips() {
-        let r = SRect::new(2, 3, 8, 5);
-        let rect = r.to_rect();
-        assert_eq!(rect.x, 2);
-        assert_eq!(rect.y, 3);
-        assert_eq!(rect.width, 8);
-        assert_eq!(rect.height, 5);
+    fn clip_entirely_off_top() {
+        let r = CanvasRect::new(0, -5, 4, 3);
+        assert_eq!(r.clip_by(SRect::new(0, 0, 20, 20)), None);
     }
+
+    #[test]
+    fn clip_entirely_off_bottom() {
+        let r = CanvasRect::new(0, 22, 4, 3);
+        assert_eq!(r.clip_by(SRect::new(0, 0, 20, 20)), None);
+    }
+
+    #[test]
+    fn clip_against_non_origin_rect() {
+        // clip rect does not start at (0,0)
+        let clip = CanvasRect::new(5, 5, 10, 10); // right=14, bottom=14
+        let r = CanvasRect::new(3, 8, 6, 4); // left=3..8, top=8..11
+        let clipped = r.clip_by(clip).unwrap();
+        assert_eq!(clipped.left(), 5);
+        assert_eq!(clipped.right(), 8);
+        assert_eq!(clipped.top(), 8);
+        assert_eq!(clipped.bottom(), 11);
+    }
+
+    // ── from_rect ─────────────────────────────────────────────────────────────
 
     #[test]
     fn from_rect() {
         let rect = Rect::new(1, 2, 10, 4);
-        let sr = SRect::from(rect);
+        let sr = CanvasRect::from(rect);
         assert_eq!(sr.origin, SPoint::new(1, 2));
         assert_eq!(sr.size.width, 10);
         assert_eq!(sr.size.height, 4);

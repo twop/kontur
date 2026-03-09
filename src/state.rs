@@ -4,10 +4,17 @@ use crate::geometry::SRect;
 pub use crate::viewport::{AnimationConfig, Viewport};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub struct NodeId(pub usize);
+pub struct NodeId(usize);
+
+#[cfg(test)]
+impl NodeId {
+    pub fn hacky(_0: usize) -> Self {
+        Self(_0)
+    }
+}
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct EdgeId(pub usize);
+pub struct EdgeId(usize);
 
 /// Identifies either a node or an edge — used by the jump-label system to
 /// enumerate both kinds of graph elements in a single sorted list.
@@ -80,8 +87,32 @@ pub enum Mode {
 // ── Application state ─────────────────────────────────────────────────────────
 
 pub struct AppState {
+    ids: (NodeId, EdgeId),
     pub nodes: Vec<Node>,
     pub edges: Vec<Edge>,
     pub vp: Viewport,
     pub mode: Mode,
+}
+
+impl AppState {
+    pub fn new(vp: Viewport, mode: Mode) -> Self {
+        Self {
+            ids: (NodeId(0), EdgeId(0)),
+            nodes: Vec::new(),
+            edges: Vec::new(),
+            vp,
+            mode,
+        }
+    }
+
+    pub fn new_node_id(&mut self) -> NodeId {
+        let (node_id, edge_id) = self.ids;
+        self.ids = (NodeId(node_id.0 + 1), edge_id);
+        node_id
+    }
+    pub fn new_edge_id(&mut self) -> EdgeId {
+        let (node_id, edge_id) = self.ids;
+        self.ids = (node_id, EdgeId(edge_id.0 + 1));
+        edge_id
+    }
 }

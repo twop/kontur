@@ -1,16 +1,23 @@
 use crossterm::event::KeyCode;
 use ratatui::{
     Frame,
-    layout::{Alignment, Constraint, Rect},
+    layout::{Alignment, Constraint, Position, Rect},
     style::{Color, Style},
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Cell, Clear, Paragraph, Row, Table},
 };
 
-use crate::labels::LabelIter;
-use crate::path::{self, PathError};
+use crate::screen_space::Screen;
 use crate::state::{BlockMode, Edge, EdgeId, Mode, Node, NodeId, Viewport};
-use crate::{binding::Binding, geometry::SPoint};
+use crate::{geometry::CanvasRect, labels::LabelIter};
+use crate::{
+    geometry::{SPoint, SRect},
+    screen_space::ViewportRect,
+};
+use crate::{
+    path::{self, PathError},
+    screen_space::ViewportPoint,
+};
 
 // ── Label pools ───────────────────────────────────────────────────────────────
 
@@ -21,7 +28,7 @@ static DOUBLE_CHARS: &[char] = &['e', 'r', 'u', 'i', 'o'];
 
 /// Chebyshev distance between two canvas points.  Used to sort jump targets by
 /// proximity to the viewport centre so the shortest labels go to nearby items.
-fn chebyshev(a: crate::geometry::SPoint, b: crate::geometry::SPoint) -> i32 {
+fn chebyshev(a: SPoint, b: SPoint) -> i32 {
     (a.x - b.x).abs().max((a.y - b.y).abs())
 }
 
@@ -37,8 +44,7 @@ pub fn assign_jump_labels(
     nodes: &[Node],
     edges: &[Edge],
     vp: &Viewport,
-    frame_w: i32,
-    frame_h: i32,
+    frame: ViewportRect,
 ) -> (Vec<(NodeId, String)>, Vec<(EdgeId, String)>) {
     use crate::state::GraphId;
 
@@ -47,18 +53,7 @@ pub fn assign_jump_labels(
     // ── Collect visible nodes ─────────────────────────────────────────────────
     let mut items: Vec<(i32, GraphId)> = nodes
         .iter()
-        .filter(|n| {
-            let s = vp.to_screen(n.rect.origin);
-            clip_to_frame(
-                s.x,
-                s.y,
-                n.rect.size.width as i32,
-                n.rect.size.height as i32,
-                frame_w,
-                frame_h,
-            )
-            .is_some()
-        })
+        .filter(|n| Screen::rect(vp, n.rect).clip_by(frame).is_some())
         .map(|n| (chebyshev(n.rect.center(), center), GraphId::Node(n.id)))
         .collect();
 
@@ -72,14 +67,8 @@ pub fn assign_jump_labels(
             // Use the closer of the two connection points as the sort key.
             let dist = chebyshev(from_pt, center).min(chebyshev(to_pt, center));
             // Only include the edge if at least one connection point is on screen.
-            let from_on = {
-                let s = vp.to_screen(from_pt);
-                s.x >= 0 && s.y >= 0 && s.x < frame_w && s.y < frame_h
-            };
-            let to_on = {
-                let s = vp.to_screen(to_pt);
-                s.x >= 0 && s.y >= 0 && s.x < frame_w && s.y < frame_h
-            };
+            let from_on = frame.contains(Screen::point(vp, from_pt));
+            let to_on = frame.contains(Screen::point(vp, to_pt));
             if from_on || to_on {
                 items.push((dist, GraphId::Edge(edge.id)));
             }
@@ -103,72 +92,40 @@ pub fn assign_jump_labels(
     (node_labels, edge_labels)
 }
 
-// ── Coordinate helpers ────────────────────────────────────────────────────────
-
-fn in_frame(x: i32, y: i32, frame: &Frame) -> bool {
-    let a = frame.area();
-    x >= 0 && y >= 0 && x < a.width as i32 && y < a.height as i32
-}
-
-// ── Clipping ──────────────────────────────────────────────────────────────────
-
-fn clip_to_frame(
-    nx: i32,
-    ny: i32,
-    nw: i32,
-    nh: i32,
-    fw: i32,
-    fh: i32,
-) -> Option<(i32, i32, i32, i32)> {
-    if nx >= fw || nx + nw <= 0 || ny >= fh || ny + nh <= 0 {
-        return None;
-    }
-    let x1 = nx.max(0);
-    let x2 = (nx + nw).min(fw);
-    let y1 = ny.max(0);
-    let y2 = (ny + nh).min(fh);
-    Some((x1, y1, x2 - x1, y2 - y1))
-}
-
 // ── Node rendering ────────────────────────────────────────────────────────────
 
 fn render_nodes(frame: &mut Frame, nodes: &[Node], vp: &Viewport, mode: &Mode) {
-    let fw = frame.area().width as i32;
-    let fh = frame.area().height as i32 - 1; // reserve last row for hint bar
+    let frame_canvas_rect = CanvasRect::from_center(vp.looking_at(), frame.area().as_size());
 
     for node in nodes {
-        let screen = vp.to_screen(node.rect.origin);
-        let screen_x = screen.x;
-        let screen_y = screen.y;
-        let nw = node.rect.size.width as i32;
-        let nh = node.rect.size.height as i32;
-
-        let (cx, cy, cw, ch) = match clip_to_frame(screen_x, screen_y, nw, nh, fw, fh) {
+        let node_rect = node.rect;
+        let clipped = match node_rect.clip_by(frame_canvas_rect) {
             Some(r) => r,
             None => continue,
         };
 
-        if cw <= 0 || ch <= 0 {
+        if clipped.size.width == 0 || clipped.size.height == 0 {
             continue;
         }
 
-        let area = Rect::new(cx as u16, cy as u16, cw as u16, ch as u16);
-
         let mut borders = Borders::NONE;
-        if screen_x == cx {
+
+        if node_rect.left() == clipped.left() {
             borders |= Borders::LEFT;
         }
-        if screen_x + nw == cx + cw {
+        if node_rect.right() == clipped.right() {
             borders |= Borders::RIGHT;
         }
-        if screen_y == cy {
+        if node_rect.top() == clipped.top() {
             borders |= Borders::TOP;
         }
-        if screen_y + nh == cy + ch {
+        if node_rect.bottom() == clipped.bottom() {
             borders |= Borders::BOTTOM;
         }
 
         let is_selected = matches!(mode, Mode::SelectedBlock(id, _) if *id == node.id);
+
+        let area = Screen::to_ratatui_rect(Screen::rect(vp, clipped), frame_canvas_rect.size);
 
         frame.render_widget(Clear, area);
 
@@ -215,6 +172,7 @@ fn render_connections(
     };
 
     let mut errors: Vec<String> = Vec::new();
+    let frame_rect = SRect::from_center(vp.looking_at(), frame.area().as_size());
 
     for edge in edges {
         let is_selected = selected_edge_id == Some(edge.id);
@@ -222,9 +180,7 @@ fn render_connections(
         match path::calculate_path(nodes, edge) {
             Ok((path_iter, _bounds)) => {
                 for (pt, sym) in path_iter.take(100) {
-                    let s = vp.to_screen(pt);
-                    let (sx, sy) = (s.x, s.y);
-                    if !in_frame(sx, sy, frame) {
+                    if !frame_rect.contains(pt) {
                         continue;
                     }
 
@@ -243,7 +199,10 @@ fn render_connections(
                         }
                     };
 
-                    if let Some(cell) = frame.buffer_mut().cell_mut((sx as u16, sy as u16)) {
+                    let ratatui_pos =
+                        Screen::to_ratatui_point(Screen::point(vp, pt), frame.area().as_size());
+
+                    if let Some(cell) = frame.buffer_mut().cell_mut(ratatui_pos) {
                         cell.set_symbol(sym.to_symbol()).set_fg(color);
                     }
                 }
@@ -296,10 +255,10 @@ fn render_error_bar(frame: &mut Frame, errors: &[String]) {
 ///
 /// The matched prefix (already typed) is shown in DarkGray; the remaining
 /// suffix is shown as bold black text on a cyan background.
-fn render_jump_label(frame: &mut Frame, label: &str, current: &str, label_x: u16, label_y: u16) {
+fn render_jump_label(frame: &mut Frame, label: &str, current: &str, pos: Position) {
     use ratatui::style::Modifier;
-
-    if label_x >= frame.area().width || label_y >= frame.area().height {
+    let Position { x, y } = pos;
+    if x >= frame.area().width || y >= frame.area().height {
         return;
     }
 
@@ -319,13 +278,13 @@ fn render_jump_label(frame: &mut Frame, label: &str, current: &str, label_x: u16
     ];
 
     let label_w = label.chars().count() as u16;
-    let available_w = frame.area().width.saturating_sub(label_x);
+    let available_w = frame.area().width.saturating_sub(x);
     let render_w = label_w.min(available_w);
     if render_w == 0 {
         return;
     }
 
-    let area = Rect::new(label_x, label_y, render_w, 1);
+    let area = Rect::new(x, y, render_w, 1);
     frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
@@ -338,9 +297,7 @@ fn render_selection_labels(
     edge_labels: &[(EdgeId, String)],
     current: &str,
 ) {
-    let fw = frame.area().width as i32;
-    let fh = frame.area().height as i32 - 1;
-
+    let viewport_rect = CanvasRect::from_center(vp.looking_at(), frame.area().as_size());
     // ── Node labels ───────────────────────────────────────────────────────────
     for (id, label) in node_labels {
         if !label.starts_with(current) {
@@ -348,32 +305,16 @@ fn render_selection_labels(
         }
 
         let node = match nodes.iter().find(|n| n.id == *id) {
-            Some(n) => n,
-            None => continue,
+            Some(n) if viewport_rect.contains(n.rect.center()) => n,
+            _ => continue,
         };
 
-        let screen = vp.to_screen(node.rect.center());
-        let (sx, sy) = (screen.x, screen.y);
-        let (cx, cy, cw, ch) = match clip_to_frame(
-            sx,
-            sy,
-            node.rect.size.width as i32,
-            node.rect.size.height as i32,
-            fw,
-            fh,
-        ) {
-            Some(r) => r,
-            None => continue,
-        };
-
-        if cw < 1 || ch < 1 {
-            continue;
-        }
-        if cx != sx || cy != sy {
-            continue;
-        }
-
-        render_jump_label(frame, label, current, (sx) as u16, (sy) as u16);
+        render_jump_label(
+            frame,
+            label,
+            current,
+            Screen::to_ratatui_point(Screen::point(vp, node.rect.center()), viewport_rect.size),
+        );
     }
 
     // ── Edge labels ───────────────────────────────────────────────────────────
@@ -387,18 +328,17 @@ fn render_selection_labels(
             None => continue,
         };
 
-        let Some(center) = get_connection_center(nodes, edge) else {
-            continue;
+        let center = match get_connection_center(nodes, edge) {
+            Some(center) if viewport_rect.contains(center) => center,
+            _ => continue,
         };
 
-        let screen = vp.to_screen(center);
-        let (sx, sy) = (screen.x, screen.y);
-
-        if sx < 0 || sy < 0 || sx >= fw || sy >= fh {
-            continue;
-        }
-
-        render_jump_label(frame, label, current, sx as u16, sy as u16);
+        render_jump_label(
+            frame,
+            label,
+            current,
+            Screen::to_ratatui_point(Screen::point(vp, center), viewport_rect.size),
+        );
     }
 }
 
@@ -455,16 +395,16 @@ fn key_label(code: &KeyCode) -> String {
 /// Each `Binding::Single` becomes one row with its key and description.
 /// Each `Binding::Group` becomes one row with all member keys joined and the group name.
 /// Each `Binding::Listen` becomes one row with `…` as the key and the description.
-fn hint_table_data(bindings: &[Binding]) -> Vec<(String, String)> {
+fn hint_table_data(bindings: &[crate::binding::Binding]) -> Vec<(String, String)> {
     bindings
         .iter()
         .map(|b| match b {
-            Binding::Single(inst) => {
+            crate::binding::Binding::Single(inst) => {
                 let key = key_label(&inst.key.key);
                 let desc = inst.description.to_string();
                 (key, desc)
             }
-            Binding::Group {
+            crate::binding::Binding::Group {
                 name,
                 bindings: members,
             } => {
@@ -475,7 +415,7 @@ fn hint_table_data(bindings: &[Binding]) -> Vec<(String, String)> {
                     .join("");
                 (keys, name.clone())
             }
-            Binding::Listen(listener) => {
+            crate::binding::Binding::Listen(listener) => {
                 let desc = listener.description.to_string();
                 ("…".to_string(), desc)
             }
@@ -485,7 +425,7 @@ fn hint_table_data(bindings: &[Binding]) -> Vec<(String, String)> {
 
 /// Render the hints panel anchored to the bottom-right corner, framed and
 /// aligned using a `Table` widget.
-fn render_hints_panel(frame: &mut Frame, bindings: &[Binding]) {
+fn render_hints_panel(frame: &mut Frame, bindings: &[crate::binding::Binding]) {
     let data = hint_table_data(bindings);
     if data.is_empty() {
         return;
@@ -553,6 +493,7 @@ fn render_hints_panel(frame: &mut Frame, bindings: &[Binding]) {
 
 // ── Key log bar ───────────────────────────────────────────────────────────────
 
+#[allow(dead_code)]
 fn render_key_log(frame: &mut Frame, key_log: &[String]) {
     let fa = frame.area();
     let area = Rect::new(0, fa.height.saturating_sub(1), fa.width, 1);
@@ -571,10 +512,11 @@ pub fn render_map(
     edges: &[Edge],
     vp: &Viewport,
     mode: &Mode,
-    bindings: &[Binding],
+    bindings: &[crate::binding::Binding],
     _key_log: &[String],
 ) {
-    frame.render_widget(ratatui::widgets::Clear, frame.area());
+    let fa = frame.area();
+    frame.render_widget(ratatui::widgets::Clear, fa);
     let path_errors = render_connections(frame, nodes, edges, vp, mode);
     render_nodes(frame, nodes, vp, mode);
     render_error_bar(frame, &path_errors);
@@ -588,7 +530,7 @@ pub fn render_map(
         render_selection_labels(frame, nodes, edges, vp, node_labels, edge_labels, current);
     }
     render_hints_panel(frame, bindings);
-    // render_key_log(frame, key_log);
+    // render_key_log(frame, _key_log);
     if let Mode::SelectedBlock(_, BlockMode::Editing { input, cursor }) = mode {
         render_popup(frame, input, *cursor);
     }

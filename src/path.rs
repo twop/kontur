@@ -1119,6 +1119,8 @@ pub fn calculate_path(nodes: &[Node], edge: &Edge) -> Result<(PathIter, SRect), 
 
 #[cfg(test)]
 mod tests {
+    use crate::state::NodeId;
+
     use super::*;
     use indoc::indoc;
 
@@ -1752,7 +1754,7 @@ mod tests {
     fn make_node(id: usize, (x, y): (i32, i32), (w, h): (u16, u16)) -> Node {
         assert!(w >= 3 && h >= 3, "nodes must be at least 3×3");
         Node {
-            id: crate::state::NodeId(id),
+            id: NodeId::hacky(id),
             rect: SRect::new(x, y, w, h),
             label: id.to_string(),
         }

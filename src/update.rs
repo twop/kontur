@@ -6,8 +6,8 @@
 // Returns `UpdateResult` so the caller knows whether to keep running.
 
 use crate::actions::Action;
-use crate::geometry::{Dir, SPoint, SRect};
-use crate::state::{AppState, ArrowDecorations, BlockMode, Edge, EdgeId, Mode, Node, NodeId, Side};
+use crate::geometry::{Dir, SRect};
+use crate::state::{AppState, ArrowDecorations, BlockMode, Edge, Mode, Node, Side};
 use crate::ui;
 use crate::viewport::AnimationConfig;
 use ratatui::layout::Size;
@@ -86,6 +86,24 @@ pub fn update(state: &mut AppState, action: Action, canvas_size: Size) -> Update
                 Dir::Down => t.y += amount as i32,
             }
             state.vp.set_center(t, &PAN_ANIM);
+        }
+
+        Action::CreateNewNode => {
+            // Default size for every new node.
+            const NEW_W: u16 = 16;
+            const NEW_H: u16 = 5;
+
+            let rect = SRect::from_center(state.vp.desired_center, Size::new(NEW_W, NEW_H));
+
+            let id = state.new_node_id();
+            state.nodes.push(Node {
+                id,
+                rect,
+                label: String::new(),
+            });
+
+            state.mode = Mode::SelectedBlock(id, BlockMode::Selected);
+            return UpdateResult::Actions(vec![Action::StartEditing, Action::FocusSelected]);
         }
 
         // ── Node movement ─────────────────────────────────────────────────────
@@ -189,8 +207,8 @@ pub fn update(state: &mut AppState, action: Action, canvas_size: Size) -> Update
                         Dir::Up => (Side::Top, Side::Bottom),
                     };
 
-                    let new_id = NodeId(state.nodes.len());
-                    let new_edge_id = EdgeId(state.edges.len());
+                    let new_id = state.new_node_id();
+                    let new_edge_id = state.new_edge_id();
                     state.nodes.push(Node {
                         id: new_id,
                         rect,
@@ -222,8 +240,7 @@ pub fn update(state: &mut AppState, action: Action, canvas_size: Size) -> Update
                 &state.nodes,
                 &state.edges,
                 &state.vp,
-                canvas_size.width as i32,
-                canvas_size.height as i32,
+                SRect::new(0, 0, canvas_size.width, canvas_size.height),
             );
             let prev = Box::new(state.mode.clone());
             state.mode = Mode::Selecting {
@@ -374,11 +391,7 @@ pub fn update(state: &mut AppState, action: Action, canvas_size: Size) -> Update
         Action::FocusSelected => {
             if let Mode::SelectedBlock(id, _) = state.mode {
                 if let Some(node) = state.nodes.iter().find(|n| n.id == id) {
-                    let c = node.rect.center();
-                    let target = SPoint::new(
-                        c.x - canvas_size.width as i32 / 2,
-                        c.y - canvas_size.height as i32 / 2,
-                    );
+                    let target = node.rect.center();
                     state.vp.set_center(target, &JUMP_ANIM);
                 }
             }

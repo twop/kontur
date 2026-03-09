@@ -10,9 +10,10 @@
 //               each press restarts the tween from the current visual position.
 //
 // Coordinate contract:
-//   `desired_center` is the *target* top-left canvas coordinate (i32).
-//   `to_screen` converts a canvas-space SPoint to screen-space using whichever
-//   animation is currently active, or the raw desired position when idle.
+//   `desired_center` is the *target* canvas coordinate of the viewport origin.
+//   To convert canvas-space points/rects to screen space, use
+//   `screen_space::Screen::point` / `Screen::rect`, which call
+//   `current_position()` internally.
 
 use crate::geometry::SPoint;
 use damped_springs::{Spring, SpringConfig, SpringParams, SpringTimeStep};
@@ -183,18 +184,27 @@ impl Viewport {
         }
     }
 
-    /// Convert a canvas-space point to a screen-space SPoint.
+    /// Returns the current animated camera center as a canvas `SPoint`.
     ///
-    /// Uses the animated position when an animation is active, or the raw
-    /// `desired_center` otherwise.
-    pub fn to_screen(&self, p: SPoint) -> SPoint {
-        let (cx, cy) = self.current_position();
-        SPoint::new(p.x - cx.round() as i32, p.y - cy.round() as i32)
+    /// When an animation is running the float position is rounded to the
+    /// nearest integer cell.  When settled (`Active::None`) the exact
+    /// `desired_center` is returned directly, avoiding any rounding noise.
+    pub fn looking_at(&self) -> SPoint {
+        match &self.active {
+            Active::None => self.desired_center,
+            _ => {
+                let (x, y) = self.current_position();
+                SPoint::new(x.round() as i32, y.round() as i32)
+            }
+        }
     }
 
-    // ── Private helpers ───────────────────────────────────────────────────────
+    // ── Crate-internal helpers ────────────────────────────────────────────────
 
     /// Returns the current animated camera position as `(x, y)` floats.
+    ///
+    /// `pub(crate)` so that `screen_space::Screen` can project canvas coords
+    /// without needing a method on `Viewport` itself.
     fn current_position(&self) -> (f32, f32) {
         match &self.active {
             Active::Spring {

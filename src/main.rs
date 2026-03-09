@@ -3,6 +3,7 @@ pub mod binding;
 pub mod geometry;
 pub mod labels;
 pub mod path;
+pub mod screen_space;
 pub mod state;
 pub mod ui;
 pub mod update;
@@ -14,7 +15,7 @@ use std::time::Instant;
 use crossterm::event::{KeyCode, KeyModifiers};
 use geometry::{SPoint, SRect};
 use ratatui::layout::Size;
-use state::{AppState, ArrowDecorations, BlockMode, Edge, EdgeId, Mode, Node, NodeId, Side};
+use state::{AppState, ArrowDecorations, BlockMode, Edge, Mode, Node, Side};
 use update::{update, UpdateResult};
 use viewport::Viewport;
 
@@ -41,71 +42,69 @@ fn format_key(code: KeyCode, mods: KeyModifiers) -> String {
 
 // ── Demo graph ────────────────────────────────────────────────────────────────
 
-fn make_demo_graph() -> (Vec<Node>, Vec<Edge>) {
-    let alpha = NodeId(0);
-    let beta = NodeId(1);
-    let gamma = NodeId(2);
-    let delta = NodeId(3);
+fn bootstrap_demo_graph(app: &mut AppState) {
+    let alpha = app.new_node_id();
+    let beta = app.new_node_id();
+    let gamma = app.new_node_id();
+    let delta = app.new_node_id();
 
-    let nodes = [
-        Node {
-            id: alpha,
-            rect: SRect::new(5, 5, 16, 5),
-            label: "Alpha".to_string(),
-        },
-        Node {
-            id: beta,
-            rect: SRect::new(35, 5, 16, 5),
-            label: "Beta".to_string(),
-        },
-        Node {
-            id: gamma,
-            rect: SRect::new(35, 18, 16, 5),
-            label: "Gamma".to_string(),
-        },
-        Node {
-            id: delta,
-            rect: SRect::new(5, 18, 16, 5),
-            label: "Delta".to_string(),
-        },
-    ];
+    app.nodes.push(Node {
+        id: alpha,
+        rect: SRect::new(5, 5, 16, 5),
+        label: "Alpha".to_string(),
+    });
+    app.nodes.push(Node {
+        id: beta,
+        rect: SRect::new(35, 5, 16, 5),
+        label: "Beta".to_string(),
+    });
+    app.nodes.push(Node {
+        id: gamma,
+        rect: SRect::new(35, 18, 16, 5),
+        label: "Gamma".to_string(),
+    });
+    app.nodes.push(Node {
+        id: delta,
+        rect: SRect::new(5, 18, 16, 5),
+        label: "Delta".to_string(),
+    });
 
-    let edges = vec![
-        Edge {
-            id: EdgeId(0),
-            from_id: alpha,
-            from_side: Side::Right,
-            to_id: beta,
-            to_side: Side::Left,
-            dir: ArrowDecorations::Forward,
-        },
-        Edge {
-            id: EdgeId(1),
-            from_id: beta,
-            from_side: Side::Bottom,
-            to_id: gamma,
-            to_side: Side::Top,
-            dir: ArrowDecorations::Forward,
-        },
-        Edge {
-            id: EdgeId(2),
-            from_id: gamma,
-            from_side: Side::Left,
-            to_id: delta,
-            to_side: Side::Right,
-            dir: ArrowDecorations::Both,
-        },
-        Edge {
-            id: EdgeId(3),
-            from_id: delta,
-            from_side: Side::Top,
-            to_id: beta,
-            to_side: Side::Bottom,
-            dir: ArrowDecorations::Backward,
-        },
-    ];
-
-    (Vec::from(nodes), edges)
+    let e0 = app.new_edge_id();
+    let e1 = app.new_edge_id();
+    let e2 = app.new_edge_id();
+    let e3 = app.new_edge_id();
+    app.edges.push(Edge {
+        id: e0,
+        from_id: alpha,
+        from_side: Side::Right,
+        to_id: beta,
+        to_side: Side::Left,
+        dir: ArrowDecorations::Forward,
+    });
+    app.edges.push(Edge {
+        id: e1,
+        from_id: beta,
+        from_side: Side::Bottom,
+        to_id: gamma,
+        to_side: Side::Top,
+        dir: ArrowDecorations::Forward,
+    });
+    app.edges.push(Edge {
+        id: e2,
+        from_id: gamma,
+        from_side: Side::Left,
+        to_id: delta,
+        to_side: Side::Right,
+        dir: ArrowDecorations::Both,
+    });
+    app.edges.push(Edge {
+        id: e3,
+        from_id: delta,
+        from_side: Side::Top,
+        to_id: beta,
+        to_side: Side::Bottom,
+        dir: ArrowDecorations::Backward,
+    });
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────
@@ -121,13 +120,12 @@ fn main() -> color_eyre::Result<()> {
 
     let mut key_log: Vec<String> = Vec::new();
 
-    let (nodes, edges) = make_demo_graph();
-    let mut app = AppState {
-        nodes,
-        edges,
-        vp: Viewport::new(SPoint::new(0, 0)),
-        mode: Mode::SelectedBlock(NodeId(0), BlockMode::Selected),
-    };
+    let mut app = AppState::new(Viewport::new(SPoint::new(0, 0)), Mode::Normal);
+    bootstrap_demo_graph(&mut app);
+    // Select the first node (Alpha) by default
+    if let Some(first) = app.nodes.first() {
+        app.mode = Mode::SelectedBlock(first.id, BlockMode::Selected);
+    }
 
     let mut last_tick = Instant::now();
 

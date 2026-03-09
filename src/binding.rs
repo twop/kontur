@@ -179,11 +179,8 @@ pub fn bindings_for_mode(mode: &Mode) -> Vec<Binding> {
                 ]
                 .map(|(key, dir)| (KeyCode::Char(key), KeyModifiers::SHIFT, Pan(dir, 10), "pan")),
             ),
-            Binding::Single(BindingInstance::new(
-                KeyCode::Char('f'),
-                StartSelecting,
-                "jump",
-            )),
+            Binding::single((KeyCode::Char('f'), StartSelecting, "jump")),
+            Binding::single((KeyCode::Char('c'), CreateNewNode, "create block")),
         ],
 
         // ── SelectedBlock / Selected ──────────────────────────────────────────
