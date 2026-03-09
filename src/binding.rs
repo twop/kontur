@@ -219,7 +219,7 @@ pub fn bindings_for_mode(mode: &Mode) -> Vec<Binding> {
             Binding::single((KeyCode::Char('i'), StartEditing, "edit label")),
             Binding::single((KeyCode::Char('d'), DeleteShape, "delete")),
             Binding::single((
-                KeyCode::Char('n'),
+                KeyCode::Char('c'),
                 StartCreatingRelativeNode,
                 "new relative node",
             )),

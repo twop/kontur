@@ -1,6 +1,8 @@
 use crate::geometry::{Dir, SPoint, SRect};
 use crate::state::{ArrowDecorations, Edge, Node, Side};
 
+const DEFAULT_CSHAPE_STICKOUT: u16 = 1;
+
 // ── PathSegment ───────────────────────────────────────────────────────────────
 
 /// A graphical symbol that can appear at a single cell on a rendered path.
@@ -121,42 +123,36 @@ fn s_shape(start: SPoint, dir: Axis, end: SPoint) -> (SPoint, Vec<(Dir, u32)>) {
             // run3 also starts advancing from its bend cell (mid_x, end.y), so
             // `distance` steps land exactly on end.x — no `+1`.
             let mid_x = (start.x + end.x) / 2;
-            let run1_dir = if mid_x >= start.x {
+            let hor_dir = if end.x >= start.x {
                 Dir::Right
             } else {
                 Dir::Left
             };
-            let run2_dir = if end.y >= start.y { Dir::Down } else { Dir::Up };
-            let run3_dir = if end.x >= mid_x {
-                Dir::Right
-            } else {
-                Dir::Left
-            };
+            let vert_dir = if end.y >= start.y { Dir::Down } else { Dir::Up };
             (
                 start,
-                vec![
-                    (run1_dir, (mid_x - start.x).unsigned_abs() + 1),
-                    (run2_dir, (end.y - start.y).unsigned_abs()),
-                    (run3_dir, (end.x - mid_x).unsigned_abs()),
-                ],
+                (vec![
+                    (hor_dir, (mid_x - start.x).unsigned_abs() + 1),
+                    (vert_dir, (end.y - start.y).unsigned_abs()),
+                    (hor_dir, (end.x - mid_x).unsigned_abs()),
+                ]),
             )
         }
         Axis::Vertical => {
             // Same asymmetry: run1 needs +1, run3 does not.
             let mid_y = (start.y + end.y) / 2;
-            let run1_dir = if mid_y >= start.y { Dir::Down } else { Dir::Up };
-            let run2_dir = if end.x >= start.x {
+            let vert_dir = if mid_y >= start.y { Dir::Down } else { Dir::Up };
+            let hor_dir = if end.x >= start.x {
                 Dir::Right
             } else {
                 Dir::Left
             };
-            let run3_dir = if end.y >= mid_y { Dir::Down } else { Dir::Up };
             (
                 start,
                 vec![
-                    (run1_dir, (mid_y - start.y).unsigned_abs() + 1),
-                    (run2_dir, (end.x - start.x).unsigned_abs()),
-                    (run3_dir, (end.y - mid_y).unsigned_abs()),
+                    (vert_dir, (mid_y - start.y).unsigned_abs() + 1),
+                    (hor_dir, (end.x - start.x).unsigned_abs()),
+                    (vert_dir, (end.y - mid_y).unsigned_abs()),
                 ],
             )
         }
@@ -409,8 +405,8 @@ pub struct PathIter {
 }
 
 impl PathIter {
-    fn new(start: SPoint, runs: Vec<(Dir, u32)>, arrow: ArrowDecorations) -> Self {
-        let runs: Vec<(Dir, u32)> = runs.into_iter().filter(|&(_, steps)| steps > 0).collect();
+    fn new(start: SPoint, mut runs: Vec<(Dir, u32)>, arrow: ArrowDecorations) -> Self {
+        runs.retain(|&(_, steps)| steps > 0);
         Self {
             runs,
             arrow,
@@ -431,24 +427,6 @@ impl Iterator for PathIter {
         }
 
         // println!("here");
-        if self.prev_dir.is_none() {
-            // Note that the very first step we don't progress the current position, because it is inclusive
-            let dir = self.runs[0].0;
-            self.prev_dir = Some(dir);
-            let current = self.current;
-            // self.current = self.current + dir;
-            self.completed_steps = 1;
-
-            // that means that we are at the very begining, so check if we need an arrow
-            let symbol = match self.arrow {
-                ArrowDecorations::Backward | ArrowDecorations::Both => {
-                    dir_to_arrow(reverse_dir(dir))
-                }
-                _ => dir_to_symbol(dir),
-            };
-
-            return Some((current, symbol));
-        }
 
         if self.run_index >= self.runs.len() {
             // that means that we completed all runs
@@ -463,7 +441,28 @@ impl Iterator for PathIter {
         let (dir, steps) = self.runs[self.run_index];
         debug_assert!(steps > 0, "zero-step run passed to PathIter");
 
-        if steps == self.completed_steps + 1 {
+        let symbol = if self.prev_dir.is_none() {
+            self.prev_dir = Some(dir);
+            // Note that the very first step we don't progress the current position, because it is inclusive
+            self.current = self.current + reverse_dir(dir);
+
+            match self.arrow {
+                // that means that we are at the very begining, so check if we need an arrow
+                ArrowDecorations::Backward | ArrowDecorations::Both => {
+                    dir_to_arrow(reverse_dir(dir))
+                }
+                _ => dir_to_symbol(dir),
+            }
+        } else {
+            dir_to_symbol(dir)
+        };
+
+        // println!(
+        //     "--run: {dir:?}, steps={steps}, completed={}",
+        //     self.completed_steps
+        // );
+
+        if steps <= self.completed_steps + 1 {
             // that means that we on the last step in the run, hence we need to check how and if we change the direction
             self.completed_steps = 0;
             self.current = self.current + dir;
@@ -471,6 +470,11 @@ impl Iterator for PathIter {
             let is_last_run = self.run_index == self.runs.len() - 1;
             let current_run_index = self.run_index;
             self.run_index += 1;
+
+            // println!(
+            //     "--end of run: {dir:?}, steps={steps}, is_last_run={}",
+            //     is_last_run
+            // );
 
             if is_last_run {
                 let symbol = match self.arrow {
@@ -489,7 +493,7 @@ impl Iterator for PathIter {
         // here we know that we can just safely make another step, we checked the corner cases above
         self.current = self.current + dir;
         self.completed_steps += 1;
-        Some((self.current, dir_to_symbol(dir)))
+        Some((self.current, symbol))
     }
 }
 
@@ -708,7 +712,6 @@ impl ConnectorShape {
 pub fn classify_shape(from: &Node, from_side: Side, to: &Node, to_side: Side) -> ConnectorShape {
     let start = connection_point(from, from_side);
     let end = connection_point(to, to_side);
-    const DEFAULT_OFFSET: u16 = 1;
 
     match (from_side, to_side) {
         (from_side, to_side) if from_side == to_side => {
@@ -725,7 +728,7 @@ pub fn classify_shape(from: &Node, from_side: Side, to: &Node, to_side: Side) ->
                 start,
                 end,
                 dir,
-                offset: DEFAULT_OFFSET,
+                offset: DEFAULT_CSHAPE_STICKOUT,
             }
         }
         // Right → Left  (S-shape, nodes separated horizontally)
@@ -829,7 +832,7 @@ pub fn classify_shape(from: &Node, from_side: Side, to: &Node, to_side: Side) ->
                 start: connection_point(to, Side::Left),
                 end,
                 dir: Dir::Up,
-                offset: DEFAULT_OFFSET,
+                offset: DEFAULT_CSHAPE_STICKOUT,
             },
         ])),
 
@@ -848,13 +851,13 @@ pub fn classify_shape(from: &Node, from_side: Side, to: &Node, to_side: Side) ->
             ConnectorShape::Line {
                 start,
                 dir: Dir::Right,
-                len: DEFAULT_OFFSET,
+                len: DEFAULT_CSHAPE_STICKOUT,
             },
             ConnectorShape::CShape {
-                start: start + (DEFAULT_OFFSET as i32, 0),
+                start: start + (DEFAULT_CSHAPE_STICKOUT as i32, 0),
                 end,
                 dir: Dir::Up,
-                offset: DEFAULT_OFFSET,
+                offset: DEFAULT_CSHAPE_STICKOUT,
             },
         ])),
         // All (Right, Top) guards above are exhaustive; this arm is unreachable.
@@ -1018,15 +1021,33 @@ pub fn classify_shape(from: &Node, from_side: Side, to: &Node, to_side: Side) ->
             end,
         }),
 
-        // Facing stubs that overlap or cross — not yet implemented.
-        (Side::Right, Side::Left) => ConnectorShape::NotImplemented(NotImplementedDetails {
-            from_rect: from.rect,
-            from_side,
-            to_rect: to.rect,
-            to_side,
-            start,
-            end,
-        }),
+        (Side::Right, Side::Left) if start.x >= end.x => {
+            let (start_side, end_side) = if start.y <= end.y {
+                (Side::Bottom, Side::Top)
+            } else {
+                (Side::Bottom, Side::Top)
+            };
+
+            let mid_y =
+                (connection_point(from, start_side).y + connection_point(to, end_side).y) / 2;
+
+            let meeting_point = SPoint::new(start.x, mid_y);
+            ConnectorShape::Composite(Vec::from([
+                ConnectorShape::CShape {
+                    start: start,
+                    end: meeting_point,
+                    dir: Dir::Right,
+                    offset: DEFAULT_CSHAPE_STICKOUT,
+                },
+                ConnectorShape::CShape {
+                    start: meeting_point,
+                    end: end,
+                    dir: Dir::Left,
+                    offset: DEFAULT_CSHAPE_STICKOUT,
+                },
+            ]))
+        }
+
         (Side::Left, Side::Right) => ConnectorShape::NotImplemented(NotImplementedDetails {
             from_rect: from.rect,
             from_side,
@@ -1054,6 +1075,7 @@ pub fn classify_shape(from: &Node, from_side: Side, to: &Node, to_side: Side) ->
 
         // Same-side cases are fully handled by the first arm above.
         (Side::Right, Side::Right)
+        | (Side::Right, Side::Left)
         | (Side::Left, Side::Left)
         | (Side::Top, Side::Top)
         | (Side::Bottom, Side::Bottom) => unreachable!("same-side handled above"),
@@ -1118,10 +1140,12 @@ mod tests {
         let mut grid = vec![vec![' '; w]; h];
 
         for (i, (pt, sym)) in PathIter::new(start, runs, arrow).enumerate() {
+            // dbg!((pt, sym));
             assert!(
                 i < 100,
                 "PathIter exceeded 100 items — likely an infinite loop"
             );
+            dbg!((i, pt, sym));
             let px = (pt.x - ox) as usize;
             let py = (pt.y - oy) as usize;
             if pt.x >= ox && pt.y >= oy && px < w && py < h {
@@ -1234,6 +1258,28 @@ mod tests {
                 xxxxxx
                 x--->x
                 xxxxxx"}
+        );
+    }
+
+    #[test]
+    fn horizontal_short_composite_line() {
+        assert_eq!(
+            render_path(SPoint::new(0, 0), vec![(Dir::Right, 1), (Dir::Right, 1)]),
+            indoc! {"
+                xxxx
+                x->x
+                xxxx"}
+        );
+    }
+
+    #[test]
+    fn horizontal_short_one_symbol_path() {
+        assert_eq!(
+            render_path(SPoint::new(0, 0), vec![(Dir::Right, 1)]),
+            indoc! {"
+                xxx
+                x>x
+                xxx"}
         );
     }
 
@@ -1741,21 +1787,48 @@ mod tests {
                 start: SPoint::new(3, 1),
                 end: SPoint::new(3, 5),
                 dir: Dir::Right,
-                offset: 2,
+                offset: DEFAULT_CSHAPE_STICKOUT,
             }
         );
         assert_eq!(
             render_scene(&[&a, &b], shape),
             indoc! {"
-                xxxxxxxx
-                x+-+   x
-                x|0|--+x
-                x+-+  |x
-                x     |x
-                x+-+  |x
-                x|1|<-+x
-                x+-+   x
-                xxxxxxxx"}
+                xxxxxxx
+                x+-+  x
+                x|0|-+x
+                x+-+ |x
+                x    |x
+                x+-+ |x
+                x|1|<+x
+                x+-+  x
+                xxxxxxx"}
+        );
+    }
+
+    #[test]
+    fn classify_short_right_to_left() {
+        let a = make_node(0, (0, 0), (3, 3));
+        let b = make_node(1, (5, 0), (3, 3));
+        let shape = classify_shape(&a, Side::Right, &b, Side::Left);
+        assert_eq!(
+            shape,
+            ConnectorShape::SShape {
+                start: SPoint::new(3, 1),
+                axis: Axis::Horizontal,
+                end: SPoint::new(4, 1)
+            }
+        );
+        let rendered = render_scene(&[&a, &b], shape);
+        println!("{rendered}");
+        assert_eq!(
+            rendered,
+            indoc! {"
+                 xxxxxxxxxx
+                 x+-+  +-+x
+                 x|0|->|1|x
+                 x+-+  +-+x
+                 xxxxxxxxxx"
+            }
         );
     }
 
@@ -1789,21 +1862,21 @@ mod tests {
                 start: SPoint::new(3, 1),
                 end: SPoint::new(3, 5),
                 dir: Dir::Left,
-                offset: 2,
+                offset: DEFAULT_CSHAPE_STICKOUT,
             }
         );
         assert_eq!(
             render_scene(&[&a, &b], shape),
             indoc! {"
-                xxxxxxxx
-                x   +-+x
-                x+--|0|x
-                x|  +-+x
-                x|     x
-                x|  +-+x
-                x+->|1|x
-                x   +-+x
-                xxxxxxxx"}
+                xxxxxxx
+                x  +-+x
+                x+-|0|x
+                x| +-+x
+                x|    x
+                x| +-+x
+                x+>|1|x
+                x  +-+x
+                xxxxxxx"}
         );
     }
 
@@ -1875,30 +1948,43 @@ mod tests {
     // runs: Left (5-1)+1=5, Down (6-1)=5
     #[test]
     fn classify_right_to_left_close_corner() {
-        let a = make_node(0, (2, 0), (3, 3));
-        let b = make_node(1, (2, 5), (3, 3));
+        let a = make_node(0, (0, 0), (3, 3));
+        let b = make_node(1, (0, 5), (3, 3));
         let shape = classify_shape(&a, Side::Right, &b, Side::Left);
+        let cshape_meeting_point = SPoint::new(3, (3 + 4) / 2);
         assert_eq!(
             shape,
-            ConnectorShape::Corner {
-                start: SPoint::new(5, 1),
-                end: SPoint::new(1, 6),
-                start_axis: Axis::Horizontal,
-            }
+            ConnectorShape::Composite(Vec::from([
+                ConnectorShape::CShape {
+                    start: SPoint::new(3, 1),
+                    end: cshape_meeting_point,
+                    dir: Dir::Right,
+                    offset: DEFAULT_CSHAPE_STICKOUT,
+                },
+                ConnectorShape::CShape {
+                    start: cshape_meeting_point,
+                    end: SPoint::new(-1, 6),
+                    dir: Dir::Left,
+                    offset: DEFAULT_CSHAPE_STICKOUT,
+                },
+            ]))
         );
+        let rendered = render_scene(&[&a, &b], shape);
+        println!("{rendered}");
         assert_eq!(
-            render_scene(&[&a, &b], shape),
+            rendered,
             indoc! {"
-                xxxxxxx
-                x +-+ x
-                x+----x
-                x|+-+ x
-                x|    x
-                x|    x
-                x|+-+ x
-                xv|1| x
-                x +-+ x
-                xxxxxxx"}
+                xxxxxxxxx
+                x  +-+  x
+                x  |0|-+x
+                x  +-+ |x
+                x+-----+x
+                x|      x
+                x| +-+  x
+                x+>|1|  x
+                x  +-+  x
+                xxxxxxxxx"
+            }
         );
     }
 
@@ -1984,7 +2070,7 @@ mod tests {
                 start: SPoint::new(1, 3),
                 end: SPoint::new(6, 3),
                 dir: Dir::Down,
-                offset: 2,
+                offset: DEFAULT_CSHAPE_STICKOUT,
             }
         );
         assert_eq!(
@@ -1995,7 +2081,6 @@ mod tests {
                 x|0|  |1|x
                 x+-+  +-+x
                 x |    ^ x
-                x |    | x
                 x +----+ x
                 xxxxxxxxxx"}
         );
