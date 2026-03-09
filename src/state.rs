@@ -3,7 +3,7 @@
 use crate::geometry::SRect;
 pub use crate::viewport::{AnimationConfig, Viewport};
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct NodeId(usize);
 
 #[cfg(test)]
@@ -62,7 +62,16 @@ pub enum BlockMode {
     // Moving,
     CreatingRelativeNode,
     Resizing,
-    Editing { input: String, cursor: usize },
+    Editing {
+        input: String,
+        cursor: usize,
+    },
+    /// Label-driven edge creation: shows jump labels on all other visible nodes;
+    /// typing a label creates an edge from the source node to the chosen target.
+    ConnectingEdge {
+        node_labels: Vec<(NodeId, String)>,
+        current: String,
+    },
 }
 
 #[derive(Clone, PartialEq)]

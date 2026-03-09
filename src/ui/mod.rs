@@ -1,96 +1,16 @@
 use crossterm::event::KeyCode;
 use ratatui::{
-    Frame,
     layout::{Alignment, Constraint, Position, Rect},
     style::{Color, Style},
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Cell, Clear, Paragraph, Row, Table},
+    Frame,
 };
 
+use crate::geometry::{CanvasRect, SPoint, SRect};
+use crate::path::{self, PathError};
 use crate::screen_space::Screen;
 use crate::state::{BlockMode, Edge, EdgeId, Mode, Node, NodeId, Viewport};
-use crate::{geometry::CanvasRect, labels::LabelIter};
-use crate::{
-    geometry::{SPoint, SRect},
-    screen_space::ViewportRect,
-};
-use crate::{
-    path::{self, PathError},
-    screen_space::ViewportPoint,
-};
-
-// ── Label pools ───────────────────────────────────────────────────────────────
-
-static SINGLE_CHARS: &[char] = &['a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l'];
-static DOUBLE_CHARS: &[char] = &['e', 'r', 'u', 'i', 'o'];
-
-// ── Jump label assignment ─────────────────────────────────────────────────────
-
-/// Chebyshev distance between two canvas points.  Used to sort jump targets by
-/// proximity to the viewport centre so the shortest labels go to nearby items.
-fn chebyshev(a: SPoint, b: SPoint) -> i32 {
-    (a.x - b.x).abs().max((a.y - b.y).abs())
-}
-
-/// Assign jump labels to every visible node and edge, sorted by distance from
-/// the viewport centre (closest first, so shortest labels land on nearby items).
-///
-/// * Nodes are sorted by distance from their centre to `vp.desired_center`.
-/// * Edges are sorted by the distance of whichever connection point is closer
-///   (from or to) to `vp.desired_center`.
-///
-/// Returns separate vecs for nodes and edges so callers can look up either kind.
-pub fn assign_jump_labels(
-    nodes: &[Node],
-    edges: &[Edge],
-    vp: &Viewport,
-    frame: ViewportRect,
-) -> (Vec<(NodeId, String)>, Vec<(EdgeId, String)>) {
-    use crate::state::GraphId;
-
-    let center = vp.desired_center;
-
-    // ── Collect visible nodes ─────────────────────────────────────────────────
-    let mut items: Vec<(i32, GraphId)> = nodes
-        .iter()
-        .filter(|n| Screen::rect(vp, n.rect).clip_by(frame).is_some())
-        .map(|n| (chebyshev(n.rect.center(), center), GraphId::Node(n.id)))
-        .collect();
-
-    // ── Collect visible edges ─────────────────────────────────────────────────
-    for edge in edges {
-        let from_node = nodes.iter().find(|n| n.id == edge.from_id);
-        let to_node = nodes.iter().find(|n| n.id == edge.to_id);
-        if let (Some(from), Some(to)) = (from_node, to_node) {
-            let from_pt = path::connection_point(from, edge.from_side);
-            let to_pt = path::connection_point(to, edge.to_side);
-            // Use the closer of the two connection points as the sort key.
-            let dist = chebyshev(from_pt, center).min(chebyshev(to_pt, center));
-            // Only include the edge if at least one connection point is on screen.
-            let from_on = frame.contains(Screen::point(vp, from_pt));
-            let to_on = frame.contains(Screen::point(vp, to_pt));
-            if from_on || to_on {
-                items.push((dist, GraphId::Edge(edge.id)));
-            }
-        }
-    }
-
-    // ── Sort by distance, closest first ──────────────────────────────────────
-    items.sort_by_key(|(d, _)| *d);
-
-    // ── Assign labels from the shared pool ───────────────────────────────────
-    let mut node_labels: Vec<(NodeId, String)> = Vec::new();
-    let mut edge_labels: Vec<(EdgeId, String)> = Vec::new();
-
-    for (label, (_, id)) in LabelIter::new(SINGLE_CHARS, DOUBLE_CHARS).zip(items) {
-        match id {
-            GraphId::Node(nid) => node_labels.push((nid, label)),
-            GraphId::Edge(eid) => edge_labels.push((eid, label)),
-        }
-    }
-
-    (node_labels, edge_labels)
-}
 
 // ── Node rendering ────────────────────────────────────────────────────────────
 
@@ -342,6 +262,45 @@ fn render_selection_labels(
     }
 }
 
+// ── Connect-edge label overlay ────────────────────────────────────────────────
+
+/// Render jump labels for all target nodes while in `BlockMode::ConnectingEdge`.
+///
+/// The source node (`source_id`) is skipped; all other visible nodes that still
+/// match the typed `current` prefix are labelled using the shared
+/// `render_jump_label` primitive.
+fn render_connect_labels(
+    frame: &mut Frame,
+    nodes: &[Node],
+    vp: &Viewport,
+    source_id: NodeId,
+    node_labels: &[(NodeId, String)],
+    current: &str,
+) {
+    let viewport_rect = CanvasRect::from_center(vp.looking_at(), frame.area().as_size());
+
+    for (id, label) in node_labels {
+        if *id == source_id {
+            continue;
+        }
+        if !label.starts_with(current) {
+            continue;
+        }
+
+        let node = match nodes.iter().find(|n| n.id == *id) {
+            Some(n) if viewport_rect.contains(n.rect.center()) => n,
+            _ => continue,
+        };
+
+        render_jump_label(
+            frame,
+            label,
+            current,
+            Screen::to_ratatui_point(Screen::point(vp, node.rect.center()), viewport_rect.size),
+        );
+    }
+}
+
 // ── Edit popup ────────────────────────────────────────────────────────────────
 
 fn popup_area(area: Rect, percent_x: u16, rows: u16) -> Rect {
@@ -528,6 +487,16 @@ pub fn render_map(
     } = mode
     {
         render_selection_labels(frame, nodes, edges, vp, node_labels, edge_labels, current);
+    }
+    if let Mode::SelectedBlock(
+        source_id,
+        BlockMode::ConnectingEdge {
+            node_labels,
+            current,
+        },
+    ) = mode
+    {
+        render_connect_labels(frame, nodes, vp, *source_id, node_labels, current);
     }
     render_hints_panel(frame, bindings);
     // render_key_log(frame, _key_log);

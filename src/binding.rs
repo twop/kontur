@@ -214,6 +214,7 @@ pub fn bindings_for_mode(mode: &Mode) -> Vec<Binding> {
             ),
             Binding::single((KeyCode::Char('r'), StartResizing, "resize mode")),
             Binding::single((KeyCode::Char('i'), StartEditing, "edit label")),
+            Binding::single((KeyCode::Char('e'), StartConnectingEdge, "connect edge")),
             Binding::single((KeyCode::Char('d'), DeleteShape, "delete")),
             Binding::single((
                 KeyCode::Char('c'),
@@ -282,6 +283,15 @@ pub fn bindings_for_mode(mode: &Mode) -> Vec<Binding> {
                 _ => None,
             })]
         }
+
+        // ── SelectedBlock / ConnectingEdge ────────────────────────────────────
+        Mode::SelectedBlock(_, BlockMode::ConnectingEdge { .. }) => vec![
+            Binding::single((KeyCode::Esc, Cancel, "cancel")),
+            Binding::listen("type label to connect", |ev| match ev.code {
+                KeyCode::Char(ch) => Some(SelectChar(ch)),
+                _ => None,
+            }),
+        ],
 
         // ── Selecting (jump-to-node) ──────────────────────────────────────────
         Mode::Selecting { .. } => vec![

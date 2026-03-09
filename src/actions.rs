@@ -5,7 +5,7 @@
 // these variants and then applies the resulting state change.
 
 use crate::geometry::Dir;
-use crate::state::EdgeId;
+use crate::state::{EdgeId, NodeId};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Action {
@@ -63,6 +63,14 @@ pub enum Action {
     DeleteShape,
     /// Delete the currently selected edge (only valid in SelectedEdge mode).
     DeleteEdge,
+
+    // ── Edge connection ───────────────────────────────────────────────────────
+    /// Enter label-driven edge-connection mode ('e' in SelectedBlock/Selected).
+    StartConnectingEdge,
+    /// Create an edge between two explicitly identified nodes.
+    /// Dispatched internally when a label sequence completes in ConnectingEdge mode,
+    /// but may be used by any caller that knows both endpoints.
+    ConnectNodes(NodeId, NodeId),
 
     // ── Edge selection ────────────────────────────────────────────────────────
     /// Transition to SelectedEdge mode for the given edge.

@@ -6,9 +6,14 @@
 // Returns `UpdateResult` so the caller knows whether to keep running.
 
 use crate::actions::Action;
-use crate::geometry::{Dir, SRect};
-use crate::state::{AppState, ArrowDecorations, BlockMode, Edge, Mode, Node, Side};
-use crate::ui;
+use crate::geometry::{CanvasRect, Dir, SPoint, SRect};
+use crate::labels::LabelIter;
+use crate::path;
+
+use crate::state::{
+    AppState, ArrowDecorations, BlockMode, Edge, EdgeId, GraphId, Mode, Node, NodeId, Side,
+    Viewport,
+};
 use crate::viewport::AnimationConfig;
 use ratatui::layout::Size;
 
@@ -23,6 +28,105 @@ const JUMP_ANIM: AnimationConfig = AnimationConfig::Spring {
     angular_freq: 10.0,
     damping_ratio: 0.95,
 };
+
+// ── Label pools ───────────────────────────────────────────────────────────────
+
+static SINGLE_CHARS: &[char] = &['a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l'];
+static DOUBLE_CHARS: &[char] = &['e', 'r', 'u', 'i', 'o'];
+
+// ── Jump label assignment ─────────────────────────────────────────────────────
+
+/// Chebyshev distance between two canvas points.  Used to sort jump targets by
+/// proximity to the viewport centre so the shortest labels go to nearby items.
+fn chebyshev(a: SPoint, b: SPoint) -> i32 {
+    (a.x - b.x).abs().max((a.y - b.y).abs())
+}
+
+/// Assign jump labels to every visible node and edge, sorted by distance from
+/// the viewport centre (closest first, so shortest labels land on nearby items).
+///
+/// * Nodes are sorted by distance from their centre to `vp.desired_center`.
+/// * Edges are sorted by the distance of whichever connection point is closer
+///   (from or to) to `vp.desired_center`.
+///
+/// Returns separate vecs for nodes and edges so callers can look up either kind.
+fn assign_jump_labels(
+    nodes: &[Node],
+    edges: &[Edge],
+    vp: &Viewport,
+    frame_size: Size,
+) -> (Vec<(NodeId, String)>, Vec<(EdgeId, String)>) {
+    let looking_at = vp.looking_at();
+    let viewport_rect = CanvasRect::from_center(looking_at, frame_size);
+
+    // ── Collect visible nodes ─────────────────────────────────────────────────
+    let mut items: Vec<(i32, GraphId)> = nodes
+        .iter()
+        .filter(|n| viewport_rect.contains(n.rect.center()))
+        .map(|n| (chebyshev(n.rect.center(), looking_at), GraphId::Node(n.id)))
+        .collect();
+
+    // ── Collect visible edges ─────────────────────────────────────────────────
+    for edge in edges {
+        let from_node = nodes.iter().find(|n| n.id == edge.from_id);
+        let to_node = nodes.iter().find(|n| n.id == edge.to_id);
+        if let (Some(from), Some(to)) = (from_node, to_node) {
+            let from_pt = path::connection_point(from, edge.from_side);
+            let to_pt = path::connection_point(to, edge.to_side);
+            if !viewport_rect.contains(from_pt) || !viewport_rect.contains(from_pt) {
+                continue;
+            }
+            // Use the closer of the two connection points as the sort key.
+            let dist = chebyshev(from_pt, looking_at).min(chebyshev(to_pt, looking_at));
+            items.push((dist, GraphId::Edge(edge.id)));
+        }
+    }
+
+    // ── Sort by distance, closest first ──────────────────────────────────────
+    items.sort_by_key(|(d, _)| *d);
+
+    // ── Assign labels from the shared pool ───────────────────────────────────
+    let mut node_labels: Vec<(NodeId, String)> = Vec::new();
+    let mut edge_labels: Vec<(EdgeId, String)> = Vec::new();
+
+    for (label, (_, id)) in LabelIter::new(SINGLE_CHARS, DOUBLE_CHARS).zip(items) {
+        match id {
+            GraphId::Node(nid) => node_labels.push((nid, label)),
+            GraphId::Edge(eid) => edge_labels.push((eid, label)),
+        }
+    }
+
+    (node_labels, edge_labels)
+}
+
+/// Assign jump labels to every visible node **except** `exclude_id`.
+///
+/// Used by `BlockMode::ConnectingEdge` to show target labels while one node is
+/// already selected as the source.  The same proximity ordering and label pools
+/// as `assign_jump_labels` are used so the UX feels consistent.
+fn assign_node_labels(
+    nodes: &[Node],
+    exclude_id: NodeId,
+    vp: &Viewport,
+    canvas_size: Size,
+) -> Vec<(NodeId, String)> {
+    let center = vp.desired_center;
+    let viewport_rect = CanvasRect::from_center(center, canvas_size);
+
+    let mut items: Vec<(i32, NodeId)> = nodes
+        .iter()
+        .filter(|n| n.id != exclude_id)
+        .filter(|n| viewport_rect.contains(n.rect.center()))
+        .map(|n| (chebyshev(n.rect.center(), center), n.id))
+        .collect();
+
+    items.sort_by_key(|(d, _)| *d);
+
+    LabelIter::new(SINGLE_CHARS, DOUBLE_CHARS)
+        .zip(items)
+        .map(|(label, (_, id))| (id, label))
+        .collect()
+}
 
 // ── Result ────────────────────────────────────────────────────────────────────
 
@@ -64,6 +168,67 @@ fn input_delete(input: &mut String, cursor: &mut usize) {
     let after = input.chars().skip(*cursor);
     *input = before.chain(after).collect();
     *cursor = clamp_cursor(input, cursor.saturating_sub(1));
+}
+
+// ── Edge side computation ─────────────────────────────────────────────────────
+
+/// Determine which sides of `src` and `dst` an edge should exit/enter from.
+///
+/// The algorithm works in canvas cell coordinates with an aspect-ratio
+/// correction: terminal cells are roughly twice as tall as they are wide, so
+/// `dy` is multiplied by 0.5 before comparing magnitudes.  This makes the
+/// 45 ° diagonal threshold correspond to a true diagonal *on screen*.
+///
+/// **Special case — nodes that are horizontally overlapping and vertically
+/// touching/overlapping:**  A Top→Bottom (or Bottom→Top) route would produce a
+/// hairpin that the router cannot draw cleanly.  Instead we emit a same-side
+/// exit (Right→Right or Left→Left) so the router produces a smooth S-shape.
+fn compute_sides(src: &Node, dst: &Node) -> (Side, Side) {
+    let src_c = src.rect.center();
+    let dst_c = dst.rect.center();
+
+    let dx = dst_c.x - src_c.x;
+    let dy = dst_c.y - src_c.y;
+
+    // Are the two nodes horizontally overlapping (center separation < sum of half-widths)?
+    let half_widths = (src.rect.size.width / 2 + dst.rect.size.width / 2) as i32;
+    let horizontally_overlapping = dx.abs() < half_widths;
+
+    // Vertical gap between the nearest borders of the two rects.
+    let vertical_gap = if dy >= 0 {
+        dst.rect.top() - src.rect.bottom()
+    } else {
+        src.rect.top() - dst.rect.bottom()
+    };
+
+    // Special case: centres overlap horizontally AND the rects are touching or
+    // overlapping vertically → exit from the same horizontal side to avoid a
+    // hairpin route.
+    if horizontally_overlapping && vertical_gap <= 0 {
+        return if dx >= 0 {
+            (Side::Right, Side::Right)
+        } else {
+            (Side::Left, Side::Left)
+        };
+    }
+
+    // General case: compare |dx| vs |dy * 0.5| (aspect-ratio-corrected).
+    // Use integer arithmetic: |dx| * 2 >= |dy|  ⟺  |dx| >= |dy * 0.5|
+    if dx.abs() * 2 >= dy.abs() {
+        // Primarily horizontal.
+        if dx >= 0 {
+            (Side::Right, Side::Left)
+        } else {
+            (Side::Left, Side::Right)
+        }
+    } else {
+        // Primarily vertical.
+        if dy >= 0 {
+            (Side::Bottom, Side::Top)
+        } else {
+            (Side::Top, Side::Bottom)
+        }
+    }
 }
 
 // ── Core update function ──────────────────────────────────────────────────────
@@ -173,6 +338,42 @@ pub fn update(state: &mut AppState, action: Action, canvas_size: Size) -> Update
         }
 
         // ── Mode transitions ──────────────────────────────────────────────────
+        Action::StartConnectingEdge => {
+            if let Mode::SelectedBlock(id, _) = state.mode {
+                state.mode = Mode::SelectedBlock(
+                    id,
+                    BlockMode::ConnectingEdge {
+                        node_labels: assign_node_labels(&state.nodes, id, &state.vp, canvas_size),
+                        current: String::new(),
+                    },
+                );
+            }
+        }
+
+        Action::ConnectNodes(from_id, to_id) => {
+            let (from_side, to_side) = {
+                let src = state.nodes.iter().find(|n| n.id == from_id);
+                let dst = state.nodes.iter().find(|n| n.id == to_id);
+                match (src, dst) {
+                    (Some(s), Some(d)) => compute_sides(s, d),
+                    _ => (Side::Right, Side::Left),
+                }
+            };
+            let edge_id = state.new_edge_id();
+            state.edges.push(Edge {
+                id: edge_id,
+                from_id,
+                from_side,
+                to_id,
+                to_side,
+                dir: ArrowDecorations::Forward,
+            });
+            // If we're in ConnectingEdge mode, return to Selected on the source node.
+            if let Mode::SelectedBlock(src_id, BlockMode::ConnectingEdge { .. }) = state.mode {
+                state.mode = Mode::SelectedBlock(src_id, BlockMode::Selected);
+            }
+        }
+
         Action::StartCreatingRelativeNode => {
             if let Mode::SelectedBlock(id, _) = state.mode {
                 state.mode = Mode::SelectedBlock(id, BlockMode::CreatingRelativeNode);
@@ -236,12 +437,8 @@ pub fn update(state: &mut AppState, action: Action, canvas_size: Size) -> Update
         }
 
         Action::StartSelecting => {
-            let (node_labels, edge_labels) = ui::assign_jump_labels(
-                &state.nodes,
-                &state.edges,
-                &state.vp,
-                SRect::new(0, 0, canvas_size.width, canvas_size.height),
-            );
+            let (node_labels, edge_labels) =
+                assign_jump_labels(&state.nodes, &state.edges, &state.vp, canvas_size);
             let prev = Box::new(state.mode.clone());
             state.mode = Mode::Selecting {
                 node_labels,
@@ -297,6 +494,10 @@ pub fn update(state: &mut AppState, action: Action, canvas_size: Size) -> Update
                 state.mode = Mode::SelectedBlock(id, BlockMode::Selected);
             }
             Mode::SelectedBlock(id, BlockMode::Resizing) => {
+                let id = *id;
+                state.mode = Mode::SelectedBlock(id, BlockMode::Selected);
+            }
+            Mode::SelectedBlock(id, BlockMode::ConnectingEdge { .. }) => {
                 let id = *id;
                 state.mode = Mode::SelectedBlock(id, BlockMode::Selected);
             }
@@ -398,19 +599,16 @@ pub fn update(state: &mut AppState, action: Action, canvas_size: Size) -> Update
         }
 
         // ── Label selection ───────────────────────────────────────────────────
-        Action::SelectChar(ch) => {
-            if let Mode::Selecting {
+        Action::SelectChar(ch) => match state.mode {
+            Mode::Selecting {
                 ref mut node_labels,
                 ref mut edge_labels,
                 ref mut current,
                 ref prev,
-            } = state.mode
-            {
+            } => {
                 current.push(ch);
                 let current_str = current.clone();
                 let prev_mode = *prev.clone();
-
-                // Check for an exact node label match.
                 if let Some((matched_id, _)) =
                     node_labels.iter().find(|(_, label)| *label == current_str)
                 {
@@ -418,8 +616,6 @@ pub fn update(state: &mut AppState, action: Action, canvas_size: Size) -> Update
                     state.mode = Mode::SelectedBlock(matched_id, BlockMode::Selected);
                     return UpdateResult::Actions(vec![Action::FocusSelected]);
                 }
-
-                // Check for an exact edge label match.
                 if let Some((matched_id, _)) =
                     edge_labels.iter().find(|(_, label)| *label == current_str)
                 {
@@ -427,20 +623,40 @@ pub fn update(state: &mut AppState, action: Action, canvas_size: Size) -> Update
                     state.mode = Mode::SelectedEdge(matched_id);
                     return UpdateResult::Continue;
                 }
-
-                // Cancel if no partial match remains for either nodes or edges.
                 let any_partial = node_labels
                     .iter()
                     .any(|(_, label)| label.starts_with(current_str.as_str()))
                     || edge_labels
                         .iter()
                         .any(|(_, label)| label.starts_with(current_str.as_str()));
-
                 if !any_partial {
                     state.mode = prev_mode;
                 }
             }
-        }
+            Mode::SelectedBlock(
+                src_id,
+                BlockMode::ConnectingEdge {
+                    ref node_labels,
+                    ref mut current,
+                },
+            ) => {
+                current.push(ch);
+                let current_str = current.clone();
+                if let Some((target_id, _)) =
+                    node_labels.iter().find(|(_, label)| *label == current_str)
+                {
+                    let target_id: NodeId = *target_id;
+                    return UpdateResult::Actions(vec![Action::ConnectNodes(src_id, target_id)]);
+                }
+                let any_partial = node_labels
+                    .iter()
+                    .any(|(_, label)| label.starts_with(current_str.as_str()));
+                if !any_partial {
+                    state.mode = Mode::SelectedBlock(src_id, BlockMode::Selected);
+                }
+            }
+            _ => (),
+        },
     }
 
     UpdateResult::Continue
