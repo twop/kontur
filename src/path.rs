@@ -113,6 +113,120 @@ pub(crate) fn edge_endpoints_ordered(
     Some((start, end))
 }
 
+// ── Endpoint ordering ─────────────────────────────────────────────────────────
+
+/// Spatial relationship of `start` relative to `end` after the two connection
+/// points have been sorted top-first, then left-first.
+///
+/// Because sorting guarantees `start.y <= end.y` (and `start.x <= end.x` when
+/// the y-coordinates are equal), only five cases are possible:
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PointRelation {
+    /// `start == end`.
+    Coincident,
+    /// `start.x == end.x`, `start.y < end.y` — directly above, same column.
+    Above,
+    /// `start.y == end.y`, `start.x < end.x` — directly left, same row.
+    LeftOf,
+    /// `start.x < end.x && start.y < end.y` — above and to the left.
+    AboveLeft,
+    /// `start.x > end.x && start.y < end.y` — above and to the right.
+    AboveRight,
+}
+
+/// The result of [`sort_endpoints`]: the two connection points in a canonical
+/// top-first / left-first order, together with their exit directions, the
+/// (possibly flipped) arrow decoration, and the spatial relationship.
+pub struct OrderedEndpoints {
+    /// Topmost (then leftmost) connection point — always the rendering start.
+    pub start: SPoint,
+    pub start_side: Side,
+    /// Exit direction from the start-side node.
+    pub start_dir: Dir,
+
+    /// The other connection point.
+    pub end: SPoint,
+    pub end_side: Side,
+    /// Exit direction from the end-side node.
+    pub end_dir: Dir,
+
+    /// Arrow decoration, flipped if the original `from`/`to` order was swapped
+    /// (`Forward` ↔ `Backward`; `Both` is unchanged).
+    pub arrow: ArrowDecorations,
+
+    /// Spatial relationship of `start` relative to `end`.
+    pub relation: PointRelation,
+}
+
+/// Maps a [`Side`] to the [`Dir`] a connector exits in.
+fn side_to_dir(side: Side) -> Dir {
+    match side {
+        Side::Right => Dir::Right,
+        Side::Left => Dir::Left,
+        Side::Top => Dir::Up,
+        Side::Bottom => Dir::Down,
+    }
+}
+
+/// Flip `Forward` ↔ `Backward`; `Both` is symmetric so it stays unchanged.
+fn flip_arrow(arrow: ArrowDecorations) -> ArrowDecorations {
+    match arrow {
+        ArrowDecorations::Forward => ArrowDecorations::Backward,
+        ArrowDecorations::Backward => ArrowDecorations::Forward,
+        ArrowDecorations::Both => ArrowDecorations::Both,
+    }
+}
+
+/// Sort two node endpoints into a canonical order (topmost first, then
+/// leftmost) and return an [`OrderedEndpoints`] describing the result.
+///
+/// The sort key is `(point.y, point.x)` — the same convention used by
+/// [`edge_endpoints_ordered`].  When the two points are swapped the arrow
+/// decoration is flipped so that the arrowhead(s) still point in the
+/// semantically correct direction.
+pub(crate) fn sort_endpoints(
+    from_node: &Node,
+    from_side: Side,
+    to_node: &Node,
+    to_side: Side,
+    arrow: ArrowDecorations,
+) -> OrderedEndpoints {
+    let from_pt = connection_point(from_node, from_side);
+    let to_pt = connection_point(to_node, to_side);
+
+    let swapped = (from_pt.y, from_pt.x) > (to_pt.y, to_pt.x);
+
+    let (start, start_side, end, end_side, arrow) = if swapped {
+        (to_pt, to_side, from_pt, from_side, flip_arrow(arrow))
+    } else {
+        (from_pt, from_side, to_pt, to_side, arrow)
+    };
+
+    let relation = if start == end {
+        PointRelation::Coincident
+    } else if start.x == end.x {
+        PointRelation::Above
+    } else if start.y == end.y {
+        PointRelation::LeftOf
+    } else if start.x < end.x {
+        PointRelation::AboveLeft
+    } else {
+        // start.x > end.x && start.y < end.y — guaranteed by the sort
+        PointRelation::AboveRight
+    };
+
+    OrderedEndpoints {
+        start,
+        start_side,
+        start_dir: side_to_dir(start_side),
+        end,
+        end_side,
+        end_dir: side_to_dir(end_side),
+        arrow,
+        relation,
+    }
+}
+
 // ── Shape builders ────────────────────────────────────────────────────────────
 //
 // Each builder returns the starting point plus a Vec of (Dir, steps) runs.
