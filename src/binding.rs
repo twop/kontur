@@ -6,7 +6,7 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::actions::Action;
-use crate::state::{BlockMode, Mode};
+use crate::state::{BlockMode, EdgeEnd, EdgeMode, Mode, Side};
 
 // ── Key representation ────────────────────────────────────────────────────────
 
@@ -150,17 +150,43 @@ pub fn bindings_for_mode(mode: &Mode) -> Vec<Binding> {
     use Action::*;
 
     let mut bindings: Vec<Binding> = match mode {
-        // ── SelectedEdge ──────────────────────────────────────────────────────
-        Mode::SelectedEdge(_) => vec![
+        // ── SelectedEdge / Selected ───────────────────────────────────────────
+        Mode::SelectedEdge(_, EdgeMode::Selected) => vec![
             Binding::single((KeyCode::Char('d'), DeleteEdge, "delete edge")),
+            Binding::single((KeyCode::Char('e'), StartTweakEdge, "tweak connectors")),
             Binding::single((KeyCode::Char('f'), StartSelecting, "jump")),
             Binding::single((KeyCode::Esc, Cancel, "deselect")),
+        ],
+
+        // ── SelectedEdge / TweakEndpoint ──────────────────────────────────────
+        Mode::SelectedEdge(_, EdgeMode::TweakEndpoint) => vec![
+            Binding::single((
+                KeyCode::Char('s'),
+                SelectEdgeEnd(EdgeEnd::From),
+                "tweak start",
+            )),
+            Binding::single((KeyCode::Char('e'), SelectEdgeEnd(EdgeEnd::To), "tweak end")),
+            Binding::single((KeyCode::Esc, Cancel, "back")),
+        ],
+
+        // ── SelectedEdge / TweakSide ──────────────────────────────────────────
+        Mode::SelectedEdge(_, EdgeMode::TweakSide { .. }) => vec![
+            Binding::group(
+                "set side",
+                [
+                    (KeyCode::Char('h'), SetEdgeSide(Side::Left), "left"),
+                    (KeyCode::Char('j'), SetEdgeSide(Side::Bottom), "down"),
+                    (KeyCode::Char('k'), SetEdgeSide(Side::Top), "up"),
+                    (KeyCode::Char('l'), SetEdgeSide(Side::Right), "right"),
+                ],
+            ),
+            Binding::single((KeyCode::Esc, Cancel, "back")),
         ],
 
         // ── Normal ────────────────────────────────────────────────────────────
         Mode::Normal => vec![
             Binding::group(
-                "Pan",
+                "pan",
                 [
                     ('h', Dir::Left),
                     ('l', Dir::Right),
@@ -170,7 +196,7 @@ pub fn bindings_for_mode(mode: &Mode) -> Vec<Binding> {
                 .map(|(key, dir)| (KeyCode::Char(key), Pan(dir, 5), "pan")),
             ),
             Binding::group(
-                "Pan Fast",
+                "pan fast",
                 [
                     ('H', Dir::Left),
                     ('L', Dir::Right),
@@ -186,7 +212,7 @@ pub fn bindings_for_mode(mode: &Mode) -> Vec<Binding> {
         // ── SelectedBlock / Selected ──────────────────────────────────────────
         Mode::SelectedBlock(_, BlockMode::Selected) => vec![
             Binding::group(
-                "Move",
+                "move",
                 [
                     ('h', Dir::Left),
                     ('l', Dir::Right),
@@ -196,7 +222,7 @@ pub fn bindings_for_mode(mode: &Mode) -> Vec<Binding> {
                 .map(|(key, dir)| (KeyCode::Char(key), Move(dir, 1), "move")),
             ),
             Binding::group(
-                "Move Fast",
+                "move fast",
                 [
                     ('H', Dir::Left),
                     ('L', Dir::Right),
@@ -228,7 +254,7 @@ pub fn bindings_for_mode(mode: &Mode) -> Vec<Binding> {
         // ── SelectedBlock / CreatingRelativeNode ─────────────────────────────
         Mode::SelectedBlock(_, BlockMode::CreatingRelativeNode) => vec![
             Binding::group(
-                "Create node",
+                "create node",
                 [
                     ('h', Dir::Left),
                     ('l', Dir::Right),
@@ -252,7 +278,7 @@ pub fn bindings_for_mode(mode: &Mode) -> Vec<Binding> {
                 ],
             ),
             Binding::group(
-                "Shrink",
+                "shrink",
                 [
                     ('H', Dir::Left),
                     ('L', Dir::Right),

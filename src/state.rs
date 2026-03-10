@@ -24,7 +24,7 @@ pub enum GraphId {
     Edge(EdgeId),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Side {
     Top,
     Bottom,
@@ -55,6 +55,27 @@ pub struct Edge {
     pub dir: ArrowDecorations,
 }
 
+// ── Edge tweaking types ───────────────────────────────────────────────────────
+
+/// Which endpoint of an edge is being tweaked.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum EdgeEnd {
+    From,
+    To,
+}
+
+/// Sub-mode for a selected edge.
+#[derive(Clone, PartialEq)]
+pub enum EdgeMode {
+    /// Edge is selected; normal edge actions available.
+    Selected,
+    /// Choosing which endpoint to tweak: press 's' for the geometrically
+    /// left/top endpoint, 'e' for the right/bottom endpoint.
+    TweakEndpoint,
+    /// Choosing which side for a specific node endpoint: h/j/k/l.
+    TweakSide { node_id: NodeId },
+}
+
 // ── Application mode ──────────────────────────────────────────────────────────
 #[derive(Clone, PartialEq)]
 pub enum BlockMode {
@@ -78,7 +99,7 @@ pub enum BlockMode {
 pub enum Mode {
     Normal,
     SelectedBlock(NodeId, BlockMode),
-    SelectedEdge(EdgeId),
+    SelectedEdge(EdgeId, EdgeMode),
     /// Jump-to-node/edge selection mode (inspired by vimium/hop.nvim).
     ///
     /// `node_labels` — label assigned to every visible node.

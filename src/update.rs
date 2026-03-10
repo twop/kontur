@@ -11,8 +11,8 @@ use crate::labels::LabelIter;
 use crate::path;
 
 use crate::state::{
-    AppState, ArrowDecorations, BlockMode, Edge, EdgeId, GraphId, Mode, Node, NodeId, Side,
-    Viewport,
+    AppState, ArrowDecorations, BlockMode, Edge, EdgeEnd, EdgeId, EdgeMode, GraphId, Mode, Node,
+    NodeId, Side, Viewport,
 };
 use crate::viewport::AnimationConfig;
 use ratatui::layout::Size;
@@ -490,25 +490,28 @@ pub fn update(state: &mut AppState, action: Action, canvas_size: Size) -> Update
 
         Action::Cancel => match &state.mode {
             Mode::SelectedBlock(id, BlockMode::Editing { .. }) => {
-                let id = *id;
-                state.mode = Mode::SelectedBlock(id, BlockMode::Selected);
+                state.mode = Mode::SelectedBlock(*id, BlockMode::Selected);
             }
             Mode::SelectedBlock(id, BlockMode::CreatingRelativeNode) => {
-                let id = *id;
-                state.mode = Mode::SelectedBlock(id, BlockMode::Selected);
+                state.mode = Mode::SelectedBlock(*id, BlockMode::Selected);
             }
             Mode::SelectedBlock(id, BlockMode::Resizing) => {
-                let id = *id;
-                state.mode = Mode::SelectedBlock(id, BlockMode::Selected);
+                state.mode = Mode::SelectedBlock(*id, BlockMode::Selected);
             }
             Mode::SelectedBlock(id, BlockMode::ConnectingEdge { .. }) => {
-                let id = *id;
-                state.mode = Mode::SelectedBlock(id, BlockMode::Selected);
+                state.mode = Mode::SelectedBlock(*id, BlockMode::Selected);
             }
             Mode::SelectedBlock(_, BlockMode::Selected) => {
                 state.mode = Mode::Normal;
             }
-            Mode::SelectedEdge(_) => {
+            Mode::SelectedEdge(id, EdgeMode::TweakSide { .. }) => {
+                let id = *id;
+                state.mode = Mode::SelectedEdge(id, EdgeMode::TweakEndpoint);
+            }
+            Mode::SelectedEdge(id, EdgeMode::TweakEndpoint) => {
+                state.mode = Mode::SelectedEdge(*id, EdgeMode::Selected);
+            }
+            Mode::SelectedEdge(_, EdgeMode::Selected) => {
                 state.mode = Mode::Normal;
             }
             Mode::Selecting { prev, .. } => {
@@ -581,7 +584,7 @@ pub fn update(state: &mut AppState, action: Action, canvas_size: Size) -> Update
 
         // ── Edge deletion ─────────────────────────────────────────────────────
         Action::DeleteEdge => {
-            if let Mode::SelectedEdge(id) = state.mode {
+            if let Mode::SelectedEdge(id, EdgeMode::Selected) = state.mode {
                 state.edges.retain(|e| e.id != id);
                 state.mode = Mode::Normal;
             }
@@ -589,7 +592,46 @@ pub fn update(state: &mut AppState, action: Action, canvas_size: Size) -> Update
 
         // ── Edge selection ────────────────────────────────────────────────────
         Action::SelectEdge(id) => {
-            state.mode = Mode::SelectedEdge(id);
+            state.mode = Mode::SelectedEdge(id, EdgeMode::Selected);
+        }
+
+        // ── Edge connector tweaking ───────────────────────────────────────────
+        Action::StartTweakEdge => {
+            if let Mode::SelectedEdge(id, EdgeMode::Selected) = state.mode {
+                state.mode = Mode::SelectedEdge(id, EdgeMode::TweakEndpoint);
+            }
+        }
+
+        Action::SelectEdgeEnd(geom_end) => {
+            if let Mode::SelectedEdge(id, EdgeMode::TweakEndpoint) = state.mode {
+                // Resolve the geometric "s"/"e" choice to the concrete NodeId
+                // being tweaked, using the normalized endpoint order.
+                let node_id = state
+                    .edges
+                    .iter()
+                    .find(|e| e.id == id)
+                    .and_then(|edge| path::edge_endpoints_ordered(&state.nodes, edge))
+                    .map(|(left, right)| match geom_end {
+                        EdgeEnd::From => left.0, // "s" → left/top node
+                        EdgeEnd::To => right.0,  // "e" → right/bottom node
+                    });
+                if let Some(node_id) = node_id {
+                    state.mode = Mode::SelectedEdge(id, EdgeMode::TweakSide { node_id });
+                }
+            }
+        }
+
+        Action::SetEdgeSide(side) => {
+            if let Mode::SelectedEdge(id, EdgeMode::TweakSide { node_id }) = state.mode {
+                if let Some(edge) = state.edges.iter_mut().find(|e| e.id == id) {
+                    if node_id == edge.from_id {
+                        edge.from_side = side;
+                    } else if node_id == edge.to_id {
+                        edge.to_side = side;
+                    }
+                }
+                state.mode = Mode::SelectedEdge(id, EdgeMode::Selected);
+            }
         }
 
         // ── Viewport focus ────────────────────────────────────────────────────
@@ -638,7 +680,7 @@ pub fn update(state: &mut AppState, action: Action, canvas_size: Size) -> Update
                     edge_labels.iter().find(|(_, label)| *label == current_str)
                 {
                     let matched_id = *matched_id;
-                    state.mode = Mode::SelectedEdge(matched_id);
+                    state.mode = Mode::SelectedEdge(matched_id, EdgeMode::Selected);
                     return UpdateResult::Continue;
                 }
                 let any_partial = node_labels

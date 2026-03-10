@@ -1,16 +1,16 @@
 use crossterm::event::KeyCode;
 use ratatui::{
-    Frame,
     layout::{Alignment, Constraint, Position, Rect},
     style::{Color, Style},
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Cell, Clear, Paragraph, Row, Table},
+    Frame,
 };
 
 use crate::geometry::{CanvasRect, SPoint, SRect};
 use crate::path::{self, PathError};
 use crate::screen_space::Screen;
-use crate::state::{BlockMode, Edge, EdgeId, Mode, Node, NodeId, Viewport};
+use crate::state::{BlockMode, Edge, EdgeId, EdgeMode, Mode, Node, NodeId, Side, Viewport};
 
 // ── Node rendering ────────────────────────────────────────────────────────────
 
@@ -85,7 +85,7 @@ fn render_connections(
 ) -> Vec<String> {
     use crate::path::PathSymbol;
 
-    let selected_edge_id = if let Mode::SelectedEdge(id) = mode {
+    let selected_edge_id = if let Mode::SelectedEdge(id, _) = mode {
         Some(*id)
     } else {
         None
@@ -301,6 +301,90 @@ fn render_connect_labels(
     }
 }
 
+// ── Edge tweak label overlays ─────────────────────────────────────────────────
+
+/// Render 's' / 'e' labels at the geometrically ordered connection points of
+/// the selected edge while in `EdgeMode::TweakEndpoint`.
+///
+/// 's' is placed at the left-most (or top-most) connection point; 'e' at the
+/// other.  Uses `path::edge_endpoints_ordered` for the ordering so update and
+/// render agree on which endpoint is which.
+fn render_tweak_endpoint_labels(
+    frame: &mut Frame,
+    nodes: &[Node],
+    edges: &[Edge],
+    vp: &Viewport,
+    edge_id: EdgeId,
+) {
+    let edge = match edges.iter().find(|e| e.id == edge_id) {
+        Some(e) => e,
+        None => return,
+    };
+    let ((left_node_id, left_side), (right_node_id, right_side)) =
+        match crate::path::edge_endpoints_ordered(nodes, edge) {
+            Some(pair) => pair,
+            None => return,
+        };
+
+    let viewport_rect = CanvasRect::from_center(vp.animated_center(), frame.area().as_size());
+
+    let left_node = nodes.iter().find(|n| n.id == left_node_id);
+    let right_node = nodes.iter().find(|n| n.id == right_node_id);
+
+    if let Some(node) = left_node {
+        let pt = crate::path::connection_point(node, left_side);
+        if viewport_rect.contains(pt) {
+            render_jump_label(
+                frame,
+                "s",
+                "",
+                Screen::to_ratatui_point(Screen::point(vp, pt), viewport_rect.size),
+            );
+        }
+    }
+    if let Some(node) = right_node {
+        let pt = crate::path::connection_point(node, right_side);
+        if viewport_rect.contains(pt) {
+            render_jump_label(
+                frame,
+                "e",
+                "",
+                Screen::to_ratatui_point(Screen::point(vp, pt), viewport_rect.size),
+            );
+        }
+    }
+}
+
+/// Render h/j/k/l labels at the four connection points of the node whose side
+/// is being chosen, while in `EdgeMode::TweakSide`.
+fn render_tweak_side_labels(frame: &mut Frame, nodes: &[Node], vp: &Viewport, node_id: NodeId) {
+    let node = match nodes.iter().find(|n| n.id == node_id) {
+        Some(n) => n,
+        None => return,
+    };
+
+    let viewport_rect = CanvasRect::from_center(vp.animated_center(), frame.area().as_size());
+
+    let side_labels: &[(&str, Side)] = &[
+        ("h", Side::Left),
+        ("j", Side::Bottom),
+        ("k", Side::Top),
+        ("l", Side::Right),
+    ];
+
+    for (label, side) in side_labels {
+        let pt = crate::path::connection_point(node, *side);
+        if viewport_rect.contains(pt) {
+            render_jump_label(
+                frame,
+                label,
+                "",
+                Screen::to_ratatui_point(Screen::point(vp, pt), viewport_rect.size),
+            );
+        }
+    }
+}
+
 // ── Edit popup ────────────────────────────────────────────────────────────────
 
 fn popup_area(area: Rect, percent_x: u16, rows: u16) -> Rect {
@@ -497,6 +581,12 @@ pub fn render_map(
     ) = mode
     {
         render_connect_labels(frame, nodes, vp, *source_id, node_labels, current);
+    }
+    if let Mode::SelectedEdge(edge_id, EdgeMode::TweakEndpoint) = mode {
+        render_tweak_endpoint_labels(frame, nodes, edges, vp, *edge_id);
+    }
+    if let Mode::SelectedEdge(_, EdgeMode::TweakSide { node_id }) = mode {
+        render_tweak_side_labels(frame, nodes, vp, *node_id);
     }
     render_hints_panel(frame, bindings);
     // render_key_log(frame, _key_log);

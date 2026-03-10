@@ -1,5 +1,5 @@
 use crate::geometry::{Dir, SPoint, SRect};
-use crate::state::{ArrowDecorations, Edge, Node, Side};
+use crate::state::{ArrowDecorations, Edge, Node, NodeId, Side};
 
 const DEFAULT_CSHAPE_STICKOUT: u16 = 1;
 
@@ -89,6 +89,28 @@ pub(crate) fn connection_point(node: &Node, side: Side) -> SPoint {
         Side::Top => node.rect.mid_top() - (0, 1),
         Side::Bottom => node.rect.mid_bottom() + (0, 1),
     }
+}
+
+/// Returns the two endpoints of `edge` ordered geometrically:
+/// left-most connection point first; if X is equal, top-most first.
+/// Each endpoint is a `(NodeId, Side)` pair.
+///
+/// Returns `None` if either node cannot be found in `nodes`.
+pub(crate) fn edge_endpoints_ordered(
+    nodes: &[Node],
+    edge: &Edge,
+) -> Option<((NodeId, Side), (NodeId, Side))> {
+    let from_node = nodes.iter().find(|n| n.id == edge.from_id)?;
+    let to_node = nodes.iter().find(|n| n.id == edge.to_id)?;
+
+    let mut points = [(from_node, edge.from_side), (to_node, edge.to_side)]
+        .map(|(node, side)| (node.id, side, connection_point(node, side)));
+
+    points.sort_by_key(|(_, _, point)| (point.y, point.x));
+
+    let [start, end] = points.map(|(id, side, _)| (id, side));
+
+    Some((start, end))
 }
 
 // ── Shape builders ────────────────────────────────────────────────────────────

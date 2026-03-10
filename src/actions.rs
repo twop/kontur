@@ -5,7 +5,7 @@
 // these variants and then applies the resulting state change.
 
 use crate::geometry::Dir;
-use crate::state::{EdgeId, NodeId};
+use crate::state::{EdgeEnd, EdgeId, NodeId, Side};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Action {
@@ -23,11 +23,11 @@ pub enum Action {
     Shrink(Dir),
 
     // ── Mode transitions ──────────────────────────────────────────────────────
-    /// Enter jump-to-node selection mode (Enter key).
+    /// Enter jump-to-node selection mode.
     StartSelecting,
-    /// Enter resize sub-mode for the currently selected node ('r').
+    /// Enter resize sub-mode for the currently selected node.
     StartResizing,
-    /// Enter inline label editing for the currently selected node ('i').
+    /// Enter inline label editing for the currently selected node.
     StartEditing,
     /// Confirm the current action (Enter inside editing, selection match).
     Confirm,
@@ -47,7 +47,7 @@ pub enum Action {
     // ── Creating New Blocks──────────────────────────────────────────────────────
     CreateNewNode,
 
-    /// Enter "create relative node" sub-mode ('n' in Selected).
+    /// Enter "create relative node" sub-mode.
     StartCreatingRelativeNode,
     /// Spawn a new node adjacent to the selected node in the given direction.
     CreateRelativeNode(Dir),
@@ -65,7 +65,7 @@ pub enum Action {
     DeleteEdge,
 
     // ── Edge connection ───────────────────────────────────────────────────────
-    /// Enter label-driven edge-connection mode ('e' in SelectedBlock/Selected).
+    /// Enter label-driven edge-connection mode.
     StartConnectingEdge,
     /// Create an edge between two explicitly identified nodes.
     /// Dispatched internally when a label sequence completes in ConnectingEdge mode,
@@ -75,6 +75,14 @@ pub enum Action {
     // ── Edge selection ────────────────────────────────────────────────────────
     /// Transition to SelectedEdge mode for the given edge.
     SelectEdge(EdgeId),
+
+    // ── Edge connector tweaking ───────────────────────────────────────────────
+    /// Enter TweakEndpoint sub-mode from SelectedEdge.
+    StartTweakEdge,
+    /// Choose which endpoint to tweak: From or To.
+    SelectEdgeEnd(EdgeEnd),
+    /// Set the side for the chosen endpoint.
+    SetEdgeSide(Side),
 
     // ── Application ───────────────────────────────────────────────────────────
     Quit,
