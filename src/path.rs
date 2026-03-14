@@ -1,5 +1,6 @@
 use crate::geometry::{Dir, SPoint, SRect};
 use crate::state::{ArrowDecorations, Edge, Node, NodeId, Side};
+use ratatui::symbols::line as ratatui_line;
 
 const DEFAULT_CSHAPE_STICKOUT: u16 = 1;
 
@@ -38,16 +39,16 @@ impl PathSymbol {
     /// Map the segment to its Unicode box-drawing / arrow symbol used in the UI.
     pub fn to_symbol(self) -> &'static str {
         match self {
-            PathSymbol::Horizontal => "─",
-            PathSymbol::Vertical => "│",
-            PathSymbol::CornerTopLeft => "┌",
-            PathSymbol::CornerTopRight => "┐",
-            PathSymbol::CornerBottomLeft => "└",
-            PathSymbol::CornerBottomRight => "┘",
-            PathSymbol::ArrowRight => "→",
-            PathSymbol::ArrowLeft => "←",
-            PathSymbol::ArrowDown => "↓",
-            PathSymbol::ArrowUp => "↑",
+            PathSymbol::Horizontal => ratatui_line::HORIZONTAL,
+            PathSymbol::Vertical => ratatui_line::VERTICAL,
+            PathSymbol::CornerTopLeft => ratatui_line::ROUNDED_TOP_LEFT,
+            PathSymbol::CornerTopRight => ratatui_line::ROUNDED_TOP_RIGHT,
+            PathSymbol::CornerBottomLeft => ratatui_line::ROUNDED_BOTTOM_LEFT,
+            PathSymbol::CornerBottomRight => ratatui_line::ROUNDED_BOTTOM_RIGHT,
+            PathSymbol::ArrowRight => "▷", // alternatives: ▶ ▷ ▹ ► ❯ > ▸
+            PathSymbol::ArrowLeft => "◁",  // alternatives: ◀ ◁ ◃ ◄ ❮ < ◂
+            PathSymbol::ArrowDown => "▽",  // alternatives: ▼ ▽ ▿ v ▾
+            PathSymbol::ArrowUp => "△",    // alternatives: ▲ △ ▵ ^ ▴
         }
     }
 
@@ -81,14 +82,19 @@ pub enum Axis {
 
 // ── Connection / offset helpers ───────────────────────────────────────────────
 
+/// Returns the border cell on `side` of `rect` where a connection line starts.
+pub(crate) fn rect_connection_point(rect: SRect, side: Side) -> SPoint {
+    match side {
+        Side::Right => rect.mid_right() + (1, 0),
+        Side::Left => rect.mid_left() - (1, 0),
+        Side::Top => rect.mid_top() - (0, 1),
+        Side::Bottom => rect.mid_bottom() + (0, 1),
+    }
+}
+
 /// Returns the border cell on `side` of `node` where a connection line starts.
 pub(crate) fn connection_point(node: &Node, side: Side) -> SPoint {
-    match side {
-        Side::Right => node.rect.mid_right() + (1, 0),
-        Side::Left => node.rect.mid_left() - (1, 0),
-        Side::Top => node.rect.mid_top() - (0, 1),
-        Side::Bottom => node.rect.mid_bottom() + (0, 1),
-    }
+    rect_connection_point(node.rect, side)
 }
 
 /// Returns the two endpoints of `edge` ordered geometrically:
@@ -137,18 +143,12 @@ pub enum PointRelation {
 /// The result of [`sort_endpoints`]: the two connection points in a canonical
 /// top-first / left-first order, together with their exit directions, the
 /// (possibly flipped) arrow decoration, and the spatial relationship.
+#[derive(Debug)]
 pub struct OrderedEndpoints {
     /// Topmost (then leftmost) connection point — always the rendering start.
-    pub start: SPoint,
-    pub start_side: Side,
-    /// Exit direction from the start-side node.
-    pub start_dir: Dir,
-
+    pub start: (Side, SRect),
     /// The other connection point.
-    pub end: SPoint,
-    pub end_side: Side,
-    /// Exit direction from the end-side node.
-    pub end_dir: Dir,
+    pub end: (Side, SRect),
 
     /// Arrow decoration, flipped if the original `from`/`to` order was swapped
     /// (`Forward` ↔ `Backward`; `Both` is unchanged).
@@ -196,19 +196,26 @@ pub(crate) fn sort_endpoints(
 
     let swapped = (from_pt.y, from_pt.x) > (to_pt.y, to_pt.x);
 
-    let (start, start_side, end, end_side, arrow) = if swapped {
-        (to_pt, to_side, from_pt, from_side, flip_arrow(arrow))
+    let (start, end, arrow) = if swapped {
+        (
+            (to_side, to_node.rect),
+            (from_side, from_node.rect),
+            flip_arrow(arrow),
+        )
     } else {
-        (from_pt, from_side, to_pt, to_side, arrow)
+        ((from_side, from_node.rect), (to_side, to_node.rect), arrow)
     };
 
-    let relation = if start == end {
+    let start_pt = rect_connection_point(start.1, start.0);
+    let end_pt = rect_connection_point(end.1, end.0);
+
+    let relation = if start_pt == end_pt {
         PointRelation::Coincident
-    } else if start.x == end.x {
+    } else if start_pt.x == end_pt.x {
         PointRelation::Above
-    } else if start.y == end.y {
+    } else if start_pt.y == end_pt.y {
         PointRelation::LeftOf
-    } else if start.x < end.x {
+    } else if start_pt.x < end_pt.x {
         PointRelation::AboveLeft
     } else {
         // start.x > end.x && start.y < end.y — guaranteed by the sort
@@ -217,11 +224,7 @@ pub(crate) fn sort_endpoints(
 
     OrderedEndpoints {
         start,
-        start_side,
-        start_dir: side_to_dir(start_side),
         end,
-        end_side,
-        end_dir: side_to_dir(end_side),
         arrow,
         relation,
     }
@@ -277,7 +280,7 @@ fn s_shape(start: SPoint, dir: Axis, end: SPoint) -> (SPoint, Vec<(Dir, u32)>) {
         Axis::Vertical => {
             // Same asymmetry: run1 needs +1, run3 does not.
             let mid_y = (start.y + end.y) / 2;
-            let vert_dir = if mid_y >= start.y { Dir::Down } else { Dir::Up };
+            let vert_dir = if end.y >= start.y { Dir::Down } else { Dir::Up };
             let hor_dir = if end.x >= start.x {
                 Dir::Right
             } else {
@@ -538,10 +541,18 @@ pub struct PathIter {
     /// Steps already taken within the current run.
     completed_steps: u32,
     prev_dir: Option<Dir>,
+
+    /// Note that those can be different from runs due to empty runs (edge cases)
+    ///   so it makes sense to explicitly capture those
+    start_end_dir: (Dir, Dir),
 }
 
 impl PathIter {
     fn new(start: SPoint, mut runs: Vec<(Dir, u32)>, arrow: ArrowDecorations) -> Self {
+        let start_end_dir = (
+            runs.first().map(|(dir, _)| *dir).unwrap_or(Dir::Left),
+            runs.last().map(|(dir, _)| *dir).unwrap_or(Dir::Left),
+        );
         runs.retain(|&(_, steps)| steps > 0);
         Self {
             runs,
@@ -550,6 +561,7 @@ impl PathIter {
             run_index: 0,
             completed_steps: 0,
             prev_dir: None,
+            start_end_dir,
         }
     }
 }
@@ -582,10 +594,11 @@ impl Iterator for PathIter {
             // Note that the very first step we don't progress the current position, because it is inclusive
             self.current = self.current + reverse_dir(dir);
 
+            let symbol_dir = self.start_end_dir.0;
             match self.arrow {
                 // that means that we are at the very begining, so check if we need an arrow
                 ArrowDecorations::Backward | ArrowDecorations::Both => {
-                    dir_to_arrow(reverse_dir(dir))
+                    dir_to_arrow(reverse_dir(symbol_dir))
                 }
                 _ => dir_to_symbol(dir),
             }
@@ -612,9 +625,10 @@ impl Iterator for PathIter {
             //     is_last_run
             // );
 
+            let symbol_dir = self.start_end_dir.1;
             if is_last_run {
                 let symbol = match self.arrow {
-                    ArrowDecorations::Forward | ArrowDecorations::Both => dir_to_arrow(dir),
+                    ArrowDecorations::Forward | ArrowDecorations::Both => dir_to_arrow(symbol_dir),
                     _ => dir_to_symbol(dir),
                 };
                 return Some((self.current, symbol));
@@ -666,7 +680,7 @@ pub enum PathError {
 /// This is the output of [`classify_shape`] and the input consumed by
 /// [`calculate_path`].  Separating classification from rendering makes each
 /// half independently testable.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum ConnectorShape {
     /// C-shaped route: both stubs leave in the same direction, then wrap around.
     CShape {
@@ -746,38 +760,6 @@ impl ConnectorShape {
         }
     }
 
-    /// Return the inclusive end point of this shape.
-    pub fn end(&self) -> SPoint {
-        match self {
-            ConnectorShape::Composite(shapes) => shapes.last().unwrap().end(),
-            _ => {
-                let (start, runs) = self.clone_runs();
-                end_point_from_runs(start, &runs)
-            }
-        }
-    }
-
-    /// Like `into_runs` but borrows `self` (used internally for `end()`).
-    fn clone_runs(&self) -> (SPoint, Vec<(Dir, u32)>) {
-        match self {
-            ConnectorShape::CShape {
-                start,
-                end,
-                dir,
-                offset,
-            } => c_shape(*start, *end, *dir, *offset),
-            ConnectorShape::SShape { start, axis, end } => s_shape(*start, *axis, *end),
-            ConnectorShape::Corner {
-                start,
-                end,
-                start_axis,
-            } => corner(*start, *end, *start_axis),
-            ConnectorShape::Line { start, dir, len } => (*start, vec![(*dir, *len as u32 + 1)]),
-            ConnectorShape::NotImplemented(d) => (d.start, vec![]),
-            ConnectorShape::Composite(_) => unreachable!("handled above"),
-        }
-    }
-
     /// Convert this shape into a `(start, runs)` pair by calling the
     /// appropriate low-level shape builder.
     ///
@@ -797,7 +779,7 @@ impl ConnectorShape {
                 end,
                 start_axis,
             } => corner(start, end, start_axis),
-            ConnectorShape::Line { start, dir, len } => (start, vec![(dir, len as u32 + 1)]),
+            ConnectorShape::Line { start, dir, len } => (start, vec![(dir, len as u32)]),
             ConnectorShape::NotImplemented(d) => (d.start, vec![]),
             ConnectorShape::Composite(shapes) => {
                 assert!(
@@ -845,7 +827,7 @@ impl ConnectorShape {
 ///
 /// This function contains all the routing logic; it does **not** call any shape
 /// builder, making it easy to unit-test in isolation.
-pub fn classify_shape(from: &Node, from_side: Side, to: &Node, to_side: Side) -> ConnectorShape {
+fn classify_shape(from: &Node, from_side: Side, to: &Node, to_side: Side) -> ConnectorShape {
     let start = connection_point(from, from_side);
     let end = connection_point(to, to_side);
 
@@ -1218,6 +1200,305 @@ pub fn classify_shape(from: &Node, from_side: Side, to: &Node, to_side: Side) ->
     }
 }
 
+// ── Path classification (ordered) ────────────────────────────────────────────
+
+/// Decide which [`ConnectorShape`] to use given a pre-sorted [`OrderedEndpoints`].
+///
+/// The outer `match` dispatches on the spatial [`PointRelation`] between the
+/// two connection points.  The inner `match` dispatches on the pair of exit
+/// sides.  Because [`sort_endpoints`] has already established the canonical
+/// ordering (start is always top-most then left-most), many of the geometric
+/// guard conditions present in [`classify_shape`] are now structural.
+///
+/// Every `(relation, start_side, end_side)` triple must be covered; gaps that
+/// are not yet routed panic with `unreachable!` to make them visible immediately
+/// during development.  Only `Coincident` returns [`ConnectorShape::NotImplemented`].
+pub fn classify_shape_ordered(ep: &OrderedEndpoints) -> ConnectorShape {
+    let (start_side, start_rect) = ep.start;
+    let (end_side, end_rect) = ep.end;
+    let start = rect_connection_point(start_rect, start_side);
+    let end = rect_connection_point(end_rect, end_side);
+    let start_dir = side_to_dir(start_side);
+
+    use Side::*;
+    match ep.relation {
+        // ── Coincident ────────────────────────────────────────────────────
+        PointRelation::Coincident => ConnectorShape::Line {
+            start,
+            dir: side_to_dir(start_side),
+            len: 1,
+        },
+
+        // ── Above ─────────────────────────────────────────────────────────
+        // start.x == end.x, start.y < end.y  (start directly above end)
+        PointRelation::Above => match (start_side, end_side) {
+            // Same side → C-shape in the shared exit direction.
+            (Top, Top) | (Right, Right) | (Bottom, Bottom) | (Left, Left) => {
+                ConnectorShape::CShape {
+                    start,
+                    end,
+                    dir: start_dir,
+                    offset: DEFAULT_CSHAPE_STICKOUT,
+                }
+            }
+
+            // Stubs face each other vertically → S-shape vertical.
+            (Side::Bottom, Side::Top) => ConnectorShape::SShape {
+                start,
+                axis: Axis::Vertical,
+                end,
+            },
+
+            // Stubs face away vertically → C-shape upward from start.
+            (Side::Top, Side::Bottom) => ConnectorShape::CShape {
+                start,
+                end,
+                dir: Dir::Up,
+                offset: DEFAULT_CSHAPE_STICKOUT,
+            },
+
+            // Horizontal stubs with vertical separation → L-shaped corner.
+            (Side::Right, Side::Left)
+            | (Side::Right, Side::Top)
+            | (Side::Right, Side::Bottom)
+            | (Side::Left, Side::Right)
+            | (Side::Left, Side::Top)
+            | (Side::Left, Side::Bottom) => ConnectorShape::Corner {
+                start,
+                end,
+                start_axis: Axis::Horizontal,
+            },
+
+            // Vertical stubs with vertical separation → L-shaped corner.
+            (Side::Top, Side::Right)
+            | (Side::Top, Side::Left)
+            | (Side::Bottom, Side::Right)
+            | (Side::Bottom, Side::Left) => ConnectorShape::Corner {
+                start,
+                end,
+                start_axis: Axis::Vertical,
+            },
+            // _ => unreachable!("Above: same-side covered by the first arm"),
+        },
+
+        // ── LeftOf ────────────────────────────────────────────────────────
+        // start.y == end.y, start.x < end.x  (start directly left of end)
+        PointRelation::LeftOf => match (start_side, end_side) {
+            // Same side → C-shape.
+            (Top, Top) | (Right, Right) | (Bottom, Bottom) | (Left, Left) => {
+                ConnectorShape::CShape {
+                    start,
+                    end,
+                    dir: start_dir,
+                    offset: DEFAULT_CSHAPE_STICKOUT,
+                }
+            }
+
+            // Stubs face each other horizontally → S-shape horizontal.
+            (Side::Right, Side::Left) => ConnectorShape::SShape {
+                start,
+                axis: Axis::Horizontal,
+                end,
+            },
+
+            // Stubs face away horizontally → C-shape leftward from start.
+            (Side::Left, Side::Right) => ConnectorShape::CShape {
+                start,
+                end,
+                dir: Dir::Left,
+                offset: DEFAULT_CSHAPE_STICKOUT,
+            },
+
+            // Vertical stubs with horizontal separation → L-shaped corner.
+            (Side::Top, Side::Bottom)
+            | (Side::Bottom, Side::Top)
+            | (Side::Top, Side::Right)
+            | (Side::Top, Side::Left)
+            | (Side::Bottom, Side::Right)
+            | (Side::Bottom, Side::Left) => ConnectorShape::Corner {
+                start,
+                end,
+                start_axis: Axis::Vertical,
+            },
+
+            // Horizontal stubs with horizontal separation → L-shaped corner.
+            (Side::Right, Side::Top)
+            | (Side::Right, Side::Bottom)
+            | (Side::Left, Side::Top)
+            | (Side::Left, Side::Bottom) => ConnectorShape::Corner {
+                start,
+                end,
+                start_axis: Axis::Horizontal,
+            },
+        },
+
+        // ── AboveLeft ─────────────────────────────────────────────────────
+        // start.x < end.x && start.y < end.y  (start above and to the left)
+        PointRelation::AboveLeft => match (start_side, end_side) {
+            // Same side → C-shape.
+            (Top, Top) | (Right, Right) | (Bottom, Bottom) | (Left, Left) => {
+                ConnectorShape::CShape {
+                    start,
+                    end,
+                    dir: start_dir,
+                    offset: DEFAULT_CSHAPE_STICKOUT,
+                }
+            }
+
+            // Opposing horizontal stubs → S-shape horizontal.
+            (Side::Right, Side::Left) => ConnectorShape::SShape {
+                start,
+                axis: Axis::Horizontal,
+                end,
+            },
+
+            // Opposing vertical stubs → S-shape vertical.
+            (Side::Bottom, Side::Top) => ConnectorShape::SShape {
+                start,
+                axis: Axis::Vertical,
+                end,
+            },
+
+            (Side::Left, Side::Right) => {
+                let meeting_point: SPoint =
+                    SPoint::new(end.x, rect_connection_point(end_rect, Side::Top).y);
+                ConnectorShape::Composite(Vec::from([
+                    ConnectorShape::CShape {
+                        start,
+                        // Note that this to ensure that we are one cell shy of reaching the meeting point
+                        // this is relevant because the composite shape assume continuety, hence no overlap
+                        end: meeting_point,
+                        dir: Dir::Left,
+                        offset: DEFAULT_CSHAPE_STICKOUT,
+                    },
+                    ConnectorShape::CShape {
+                        start: meeting_point,
+                        end,
+                        dir: Dir::Right,
+                        offset: 1,
+                    },
+                ]))
+            }
+
+            // Stubs face away vertically → C-shape.
+            (Side::Top, Side::Bottom) => ConnectorShape::CShape {
+                start,
+                end,
+                dir: Dir::Up,
+                offset: DEFAULT_CSHAPE_STICKOUT,
+            },
+
+            // Horizontal-first corners.
+            (Side::Right, Side::Top)
+            | (Side::Right, Side::Bottom)
+            | (Side::Left, Side::Top)
+            | (Side::Left, Side::Bottom) => ConnectorShape::Corner {
+                start,
+                end,
+                start_axis: Axis::Horizontal,
+            },
+
+            // Vertical-first corners.
+            (Side::Top, Side::Right)
+            | (Side::Top, Side::Left)
+            | (Side::Bottom, Side::Right)
+            | (Side::Bottom, Side::Left) => ConnectorShape::Corner {
+                start,
+                end,
+                start_axis: Axis::Vertical,
+            },
+        },
+
+        // ── AboveRight ────────────────────────────────────────────────────
+        // start.x > end.x && start.y < end.y  (start above and to the right)
+        PointRelation::AboveRight => match (start_side, end_side) {
+            // Same side → C-shape.
+            (Top, Top) | (Right, Right) | (Bottom, Bottom) | (Left, Left) => {
+                ConnectorShape::CShape {
+                    start,
+                    end,
+                    dir: start_dir,
+                    offset: DEFAULT_CSHAPE_STICKOUT,
+                }
+            }
+
+            // Opposing horizontal stubs → S-shape horizontal.
+            (Side::Left, Side::Right) => ConnectorShape::SShape {
+                start,
+                axis: Axis::Horizontal,
+                end,
+            },
+
+            // Opposing vertical stubs → S-shape vertical.
+            (Side::Bottom, Side::Top) => ConnectorShape::SShape {
+                start,
+                axis: Axis::Vertical,
+                end,
+            },
+
+            // Stubs face away horizontally → C-shape.
+            (Side::Right, Side::Left) => ConnectorShape::CShape {
+                start,
+                end,
+                dir: Dir::Right,
+                offset: DEFAULT_CSHAPE_STICKOUT,
+            },
+
+            // Stubs face away vertically → C-shape.
+            (Side::Top, Side::Bottom) => ConnectorShape::CShape {
+                start,
+                end,
+                dir: Dir::Up,
+                offset: DEFAULT_CSHAPE_STICKOUT,
+            },
+
+            // Right → Top with start to the right of end: Composite (Line + CShape).
+            //
+            //   +---------------+
+            //   |               |
+            //  xxx              |
+            //  xxx              |
+            //  xxx              |
+            //               xxx |
+            //               xSx-+
+            //               xxx
+            //
+            (Side::Right, Side::Top) => ConnectorShape::Composite(Vec::from([
+                ConnectorShape::Line {
+                    start,
+                    dir: Dir::Right,
+                    len: DEFAULT_CSHAPE_STICKOUT,
+                },
+                ConnectorShape::CShape {
+                    start: start + (DEFAULT_CSHAPE_STICKOUT as i32, 0),
+                    end,
+                    dir: Dir::Up,
+                    offset: DEFAULT_CSHAPE_STICKOUT,
+                },
+            ])),
+
+            // Horizontal-first corners.
+            (Side::Right, Side::Bottom) | (Side::Left, Side::Top) | (Side::Left, Side::Bottom) => {
+                ConnectorShape::Corner {
+                    start,
+                    end,
+                    start_axis: Axis::Horizontal,
+                }
+            }
+
+            // Vertical-first corners.
+            (Side::Top, Side::Right)
+            | (Side::Top, Side::Left)
+            | (Side::Bottom, Side::Right)
+            | (Side::Bottom, Side::Left) => ConnectorShape::Corner {
+                start,
+                end,
+                start_axis: Axis::Vertical,
+            },
+        },
+    }
+}
+
 // ── Path calculation ──────────────────────────────────────────────────────────
 
 /// Builds the path for `edge`, returning a lazy [`PathIter`] of
@@ -1238,7 +1519,11 @@ pub fn calculate_path(nodes: &[Node], edge: &Edge) -> Result<(PathIter, SRect), 
         .find(|n| n.id == edge.to_id)
         .ok_or(PathError::NodeNotFound)?;
 
-    let shape = classify_shape(from_node, edge.from_side, to_node, edge.to_side);
+    let ordered_endpoints =
+        sort_endpoints(from_node, edge.from_side, to_node, edge.to_side, edge.dir);
+
+    let shape = classify_shape_ordered(&ordered_endpoints);
+    // println!("calculate_path, {ordered_endpoints:#?}\n{shape:#?}");
 
     // Surface NotImplemented before trying to build runs.
     if let ConnectorShape::NotImplemented(details) = shape {
@@ -1247,8 +1532,22 @@ pub fn calculate_path(nodes: &[Node], edge: &Edge) -> Result<(PathIter, SRect), 
 
     let (start, runs) = shape.into_runs();
     let bounds = bounds_from_runs(start, &runs);
-    let iter = PathIter::new(start, runs, edge.dir);
+    let iter = PathIter::new(start, runs, ordered_endpoints.arrow);
     Ok((iter, bounds))
+}
+
+/// Classify the [`ConnectorShape`] for `edge` without converting it to runs.
+///
+/// This is the same classification pipeline used by [`calculate_path`], exposed
+/// separately so callers (e.g. the debug UI) can inspect the shape without
+/// paying the cost of building the full run list.
+///
+/// Returns `None` if either node referenced by the edge is not found in `nodes`.
+pub fn classify_path(nodes: &[Node], edge: &Edge) -> Option<(ConnectorShape, OrderedEndpoints)> {
+    let from_node = nodes.iter().find(|n| n.id == edge.from_id)?;
+    let to_node = nodes.iter().find(|n| n.id == edge.to_id)?;
+    let ep = sort_endpoints(from_node, edge.from_side, to_node, edge.to_side, edge.dir);
+    Some((classify_shape_ordered(&ep), ep))
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────

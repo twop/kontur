@@ -16,7 +16,7 @@ use crossterm::event::{KeyCode, KeyModifiers};
 use geometry::{SPoint, SRect};
 use ratatui::layout::Size;
 use state::{AppState, ArrowDecorations, BlockMode, Edge, Mode, Node, Side};
-use update::{update, UpdateResult};
+use update::{UpdateResult, update};
 use viewport::Viewport;
 
 fn format_key(code: KeyCode, mods: KeyModifiers) -> String {
@@ -107,6 +107,32 @@ fn bootstrap_demo_graph(app: &mut AppState) {
     });
 }
 
+fn bootstrap_small_demo_graph(app: &mut AppState) {
+    let alpha = app.new_node_id();
+    let beta = app.new_node_id();
+
+    app.nodes.push(Node {
+        id: alpha,
+        rect: SRect::new(-5, -2, 10, 3),
+        label: "alpha".to_string(),
+    });
+    app.nodes.push(Node {
+        id: beta,
+        rect: SRect::new(-5, 2, 10, 3),
+        label: "beta".to_string(),
+    });
+
+    let a_to_b = app.new_edge_id();
+    app.edges.push(Edge {
+        id: a_to_b,
+        from_id: alpha,
+        from_side: Side::Bottom,
+        to_id: beta,
+        to_side: Side::Top,
+        dir: ArrowDecorations::Forward,
+    });
+}
+
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 fn main() -> color_eyre::Result<()> {
@@ -121,7 +147,8 @@ fn main() -> color_eyre::Result<()> {
     let mut key_log: Vec<String> = Vec::new();
 
     let mut app = AppState::new(Viewport::new(SPoint::new(0, 0)), Mode::Normal);
-    bootstrap_demo_graph(&mut app);
+    bootstrap_small_demo_graph(&mut app);
+    // bootstrap_demo_graph(&mut app);
     // Select the first node (Alpha) by default
     if let Some(first) = app.nodes.first() {
         app.mode = Mode::SelectedBlock(first.id, BlockMode::Selected);

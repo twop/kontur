@@ -32,7 +32,7 @@ pub enum Side {
     Right,
 }
 
-#[derive(Clone, PartialEq, Eq, Copy)]
+#[derive(Clone, Debug, PartialEq, Eq, Copy)]
 pub enum ArrowDecorations {
     Forward,  // arrowhead at destination only
     Backward, // arrowhead at source only

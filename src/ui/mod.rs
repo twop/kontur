@@ -1,10 +1,10 @@
 use crossterm::event::KeyCode;
 use ratatui::{
+    Frame,
     layout::{Alignment, Constraint, Position, Rect},
     style::{Color, Style},
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Cell, Clear, Paragraph, Row, Table},
-    Frame,
 };
 
 use crate::geometry::{CanvasRect, SPoint, SRect};
@@ -534,6 +534,71 @@ fn render_hints_panel(frame: &mut Frame, bindings: &[crate::binding::Binding]) {
     frame.render_widget(table, area);
 }
 
+// ── Generic debug panel ───────────────────────────────────────────────────────
+
+/// Render a titled, bordered panel anchored to the **top-right** corner of the
+/// frame.
+///
+/// `content` is a pre-built [`Paragraph`] (without a block attached).
+/// `content_w` / `content_h` are the inner dimensions of the content — the
+/// panel will add 2 cells on each axis for the border.
+fn render_debug_panel(
+    frame: &mut Frame,
+    title: &str,
+    content: Paragraph,
+    content_w: u16,
+    content_h: u16,
+) {
+    let fa = frame.area();
+    let panel_w = (content_w + 2).min(fa.width);
+    let panel_h = (content_h + 2).min(fa.height);
+    let x = fa.width.saturating_sub(panel_w);
+    let y = 0;
+    let area = Rect::new(x, y, panel_w, panel_h);
+
+    let block = Block::default()
+        .title(title)
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(Color::DarkGray));
+
+    frame.render_widget(Clear, area);
+    frame.render_widget(content.block(block), area);
+}
+
+// ── Edge shape debug panel ────────────────────────────────────────────────────
+
+/// When an edge is selected (`EdgeMode::Selected`), render a top-right debug
+/// panel showing the [`ConnectorShape`] classification as a pretty-printed Rust
+/// value (`{:#?}`).
+fn render_edge_shape_panel(frame: &mut Frame, nodes: &[Node], edges: &[Edge], mode: &Mode) {
+    let Mode::SelectedEdge(edge_id, crate::state::EdgeMode::Selected) = mode else {
+        return;
+    };
+    let Some(edge) = edges.iter().find(|e| e.id == *edge_id) else {
+        return;
+    };
+    let Some((shape, ordered_endpoints)) = crate::path::classify_path(nodes, edge) else {
+        return;
+    };
+
+    let (start, runs) = shape.clone().into_runs();
+    let runs_lines: String = runs
+        .iter()
+        .map(|(dir, steps)| format!("  {:?}", (dir, steps)))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let text = format!(
+        "{shape:#?}\n\nstart: {start:?}\nruns:\n{runs_lines}\nrelations:{:?}",
+        ordered_endpoints.relation
+    );
+    let content_w = text.lines().map(|l| l.len()).max().unwrap_or(0) as u16;
+    let content_h = text.lines().count() as u16;
+
+    let para = Paragraph::new(text).style(Style::default().fg(Color::Gray));
+    render_debug_panel(frame, " shape ", para, content_w, content_h);
+}
+
 // ── Key log bar ───────────────────────────────────────────────────────────────
 
 #[allow(dead_code)]
@@ -589,6 +654,7 @@ pub fn render_map(
         render_tweak_side_labels(frame, nodes, vp, *node_id);
     }
     render_hints_panel(frame, bindings);
+    render_edge_shape_panel(frame, nodes, edges, mode);
     // render_key_log(frame, _key_log);
     if let Mode::SelectedBlock(_, BlockMode::Editing { input, cursor }) = mode {
         render_popup(frame, input, *cursor);
