@@ -113,7 +113,7 @@ fn bootstrap_small_demo_graph(app: &mut AppState) {
 
     app.nodes.push(Node {
         id: alpha,
-        rect: SRect::new(-5, -2, 10, 3),
+        rect: SRect::new(-5, -3, 10, 3),
         label: "alpha".to_string(),
     });
     app.nodes.push(Node {
@@ -126,9 +126,9 @@ fn bootstrap_small_demo_graph(app: &mut AppState) {
     app.edges.push(Edge {
         id: a_to_b,
         from_id: alpha,
-        from_side: Side::Bottom,
+        from_side: Side::Right,
         to_id: beta,
-        to_side: Side::Top,
+        to_side: Side::Left,
         dir: ArrowDecorations::Forward,
     });
 }
