@@ -872,27 +872,25 @@ pub fn classify_shape_ordered(ep: &OrderedEndpoints) -> ConnectorShape {
 
         // ── LeftOf ────────────────────────────────────────────────────────
         // start.y == end.y, start.x < end.x  (start directly left of end)
-        PointRelation::LeftOf => classify_left_of(start_side, end_side, start, end, start_dir),
+        PointRelation::LeftOf => classify_left_of((start_rect, start_side), (end_rect, end_side)),
 
         // ── AboveLeft ─────────────────────────────────────────────────────
         // start.x < end.x && start.y < end.y  (start above and to the left)
         PointRelation::AboveLeft => {
-            classify_above_left(start_side, end_side, end_rect, start, end, start_dir)
+            classify_above_left((start_rect, start_side), (end_rect, end_side))
         }
 
         // ── AboveRight ────────────────────────────────────────────────────
         // start.x > end.x && start.y < end.y  (start above and to the right)
         PointRelation::AboveRight => {
-            classify_above_right(start_side, start_rect, end_side, end_rect)
+            classify_above_right((start_rect, start_side), (end_rect, end_side))
         }
     }
 }
 
 fn classify_above_right(
-    start_side: Side,
-    start_rect: SRect,
-    end_side: Side,
-    end_rect: SRect,
+    (start_rect, start_side): (SRect, Side),
+    (end_rect, end_side): (SRect, Side),
 ) -> ConnectorShape {
     let start = rect_connection_point(start_rect, start_side);
     let end = rect_connection_point(end_rect, end_side);
@@ -920,39 +918,10 @@ fn classify_above_right(
             end,
         },
 
-        (Side::Right, Side::Left) => {
-            let start_rect_bottom = rect_connection_point(start_rect, Side::Bottom).y;
-            let end_rect_top = rect_connection_point(end_rect, Side::Top).y;
-
-            let enough_space_between = start_rect_bottom <= end_rect_top;
-
-            let meeting_point: SPoint = match enough_space_between {
-                true => SPoint::new(end.x, end_rect_top),
-
-                // we are going to wrap around the smaller one
-                //   which in that case is the starting rect
-                //   hence, wrap it on top
-                false if end_rect.size.height >= start_rect.size.height => {
-                    SPoint::new(end.x, rect_connection_point(start_rect, Side::Top).y)
-                }
-
-                //  and in that case is the end rect is smaller, hence wrap it on the bottom
-                false => SPoint::new(end.x, rect_connection_point(end_rect, Side::Bottom).y),
-            };
-
-            CS::Composite(Vec::from([
-                CS::CShape {
-                    start,
-                    end: meeting_point,
-                    step_out_dir: Dir::Right,
-                },
-                CS::CShape {
-                    start: meeting_point,
-                    end,
-                    step_out_dir: Dir::Left,
-                },
-            ]))
-        }
+        (Side::Right, Side::Left) => classify_horizontal_connectors_sticking_out(
+            (start_rect, start_side),
+            (end_rect, end_side),
+        ),
 
         // Stubs face away vertically → C-shape.
         (Side::Top, Side::Bottom) => CS::CShape {
@@ -1006,21 +975,62 @@ fn classify_above_right(
     }
 }
 
-fn classify_above_left(
-    start_side: Side,
-    end_side: Side,
-    end_rect: SRect,
-    start: SPoint,
-    end: SPoint,
-    start_dir: Dir,
+fn classify_horizontal_connectors_sticking_out(
+    (start_rect, start_side): (SRect, Side),
+    (end_rect, end_side): (SRect, Side),
 ) -> ConnectorShape {
+    use ConnectorShape as CS;
+
+    let start = rect_connection_point(start_rect, start_side);
+    let end = rect_connection_point(end_rect, end_side);
+
+    let start_rect_bottom = rect_connection_point(start_rect, Side::Bottom).y;
+    let end_rect_top = rect_connection_point(end_rect, Side::Top).y;
+
+    let enough_space_between = start_rect_bottom <= end_rect_top;
+
+    let meeting_point: SPoint = match enough_space_between {
+        true => SPoint::new(end.x, end_rect_top),
+
+        // we are going to wrap around the smaller one
+        //   which in that case is the starting rect
+        //   hence, wrap it on top
+        false if end_rect.size.height >= start_rect.size.height => {
+            SPoint::new(end.x, rect_connection_point(start_rect, Side::Top).y)
+        }
+
+        //  and in that case is the end rect is smaller, hence wrap it on the bottom
+        false => SPoint::new(end.x, rect_connection_point(end_rect, Side::Bottom).y),
+    };
+
+    CS::Composite(Vec::from([
+        CS::CShape {
+            start,
+            end: meeting_point,
+            step_out_dir: side_to_dir(start_side),
+        },
+        CS::CShape {
+            start: meeting_point,
+            end,
+            step_out_dir: side_to_dir(end_side),
+        },
+    ]))
+}
+
+fn classify_above_left(
+    (start_rect, start_side): (SRect, Side),
+    (end_rect, end_side): (SRect, Side),
+) -> ConnectorShape {
+    let start = rect_connection_point(start_rect, start_side);
+    let end = rect_connection_point(end_rect, end_side);
+
     use Side::*;
     match (start_side, end_side) {
         // Same side → C-shape.
         (Top, Top) | (Right, Right) | (Bottom, Bottom) | (Left, Left) => ConnectorShape::CShape {
             start,
             end,
-            step_out_dir: start_dir,
+            step_out_dir: side_to_dir(start_side),
         },
 
         // Opposing horizontal stubs → S-shape horizontal.
@@ -1037,24 +1047,10 @@ fn classify_above_left(
             end,
         },
 
-        (Side::Left, Side::Right) => {
-            let meeting_point: SPoint =
-                SPoint::new(end.x, rect_connection_point(end_rect, Side::Top).y);
-            ConnectorShape::Composite(Vec::from([
-                ConnectorShape::CShape {
-                    start,
-                    // Note that this to ensure that we are one cell shy of reaching the meeting point
-                    // this is relevant because the composite shape assume continuety, hence no overlap
-                    end: meeting_point,
-                    step_out_dir: Dir::Left,
-                },
-                ConnectorShape::CShape {
-                    start: meeting_point,
-                    end,
-                    step_out_dir: Dir::Right,
-                },
-            ]))
-        }
+        (Side::Left, Side::Right) => classify_horizontal_connectors_sticking_out(
+            (start_rect, start_side),
+            (end_rect, end_side),
+        ),
 
         // Stubs face away vertically → C-shape.
         (Side::Top, Side::Bottom) => ConnectorShape::CShape {
@@ -1086,19 +1082,19 @@ fn classify_above_left(
 }
 
 fn classify_left_of(
-    start_side: Side,
-    end_side: Side,
-    start: SPoint,
-    end: SPoint,
-    start_dir: Dir,
+    (start_rect, start_side): (SRect, Side),
+    (end_rect, end_side): (SRect, Side),
 ) -> ConnectorShape {
+    let start = rect_connection_point(start_rect, start_side);
+    let end = rect_connection_point(end_rect, end_side);
+
     use Side::*;
     match (start_side, end_side) {
         // Same side → C-shape.
         (Top, Top) | (Right, Right) | (Bottom, Bottom) | (Left, Left) => ConnectorShape::CShape {
             start,
             end,
-            step_out_dir: start_dir,
+            step_out_dir: side_to_dir(start_side),
         },
 
         // Stubs face each other horizontally, same row → straight line.
@@ -1110,12 +1106,10 @@ fn classify_left_of(
             pointed_ends: (Dir::Right, Dir::Right),
         },
 
-        // Stubs face away horizontally → C-shape leftward from start.
-        (Side::Left, Side::Right) => ConnectorShape::CShape {
-            start,
-            end,
-            step_out_dir: Dir::Left,
-        },
+        (Side::Left, Side::Right) => classify_horizontal_connectors_sticking_out(
+            (start_rect, start_side),
+            (end_rect, end_side),
+        ),
 
         // Vertical stubs with horizontal separation → L-shaped corner.
         (Side::Top, Side::Bottom)
