@@ -626,6 +626,8 @@ dependencies = [
  "damped-springs",
  "indoc",
  "ratatui",
+ "serde",
+ "serde_json",
  "tween",
 ]
 

@@ -4,7 +4,7 @@ use crate::geometry::SRect;
 pub use crate::viewport::{AnimationConfig, Viewport};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct NodeId(usize);
+pub struct NodeId(pub(crate) usize);
 
 #[cfg(test)]
 impl NodeId {
@@ -14,7 +14,7 @@ impl NodeId {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct EdgeId(usize);
+pub struct EdgeId(pub(crate) usize);
 
 /// Identifies either a node or an edge — used by the jump-label system to
 /// enumerate both kinds of graph elements in a single sorted list.
@@ -144,5 +144,21 @@ impl AppState {
         let (node_id, edge_id) = self.ids;
         self.ids = (node_id, EdgeId(edge_id.0 + 1));
         edge_id
+    }
+
+    /// Construct an `AppState` from an existing set of nodes, edges, and a
+    /// viewport.  The ID counters are derived from the maximum IDs present in
+    /// the supplied collections so that subsequent allocations never collide
+    /// with existing shapes.  The mode starts as `Normal`.
+    pub fn from_parts(nodes: Vec<Node>, edges: Vec<Edge>, vp: Viewport) -> Self {
+        let next_node = nodes.iter().map(|n| n.id.0).max().unwrap_or(0) + 1;
+        let next_edge = edges.iter().map(|e| e.id.0).max().unwrap_or(0) + 1;
+        Self {
+            ids: (NodeId(next_node), EdgeId(next_edge)),
+            nodes,
+            edges,
+            vp,
+            mode: Mode::Normal,
+        }
     }
 }

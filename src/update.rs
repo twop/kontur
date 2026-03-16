@@ -130,6 +130,16 @@ fn assign_node_labels(
 
 // ── Result ────────────────────────────────────────────────────────────────────
 
+/// Side effects that the pure `update` function cannot perform itself (e.g.
+/// I/O).  The caller in `main.rs` is responsible for executing them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Effect {
+    /// Serialize the current scene to `scene.kontur`.
+    SaveScene,
+    /// Deserialize `scene.kontur` and replace the current scene.
+    LoadScene,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UpdateResult {
     Continue,
@@ -138,6 +148,8 @@ pub enum UpdateResult {
     /// current one.  The caller processes them in order; each may itself return
     /// `Actions(…)`, enabling arbitrarily-deep chaining.
     Actions(Vec<Action>),
+    /// A side effect that must be handled by the caller.
+    Effect(Effect),
 }
 
 // ── Text-editing helpers ──────────────────────────────────────────────────────
@@ -240,6 +252,10 @@ pub fn update(state: &mut AppState, action: Action, canvas_size: Size) -> Update
     match action {
         // ── Application ───────────────────────────────────────────────────────
         Action::Quit => return UpdateResult::Quit,
+
+        // ── Scene persistence ─────────────────────────────────────────────────
+        Action::SaveScene => return UpdateResult::Effect(Effect::SaveScene),
+        Action::LoadScene => return UpdateResult::Effect(Effect::LoadScene),
 
         // ── Viewport panning (Normal mode) ────────────────────────────────────
         Action::Pan(dir, amount) => {

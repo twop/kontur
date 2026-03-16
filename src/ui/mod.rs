@@ -1,10 +1,10 @@
 use crossterm::event::KeyCode;
 use ratatui::{
-    Frame,
     layout::{Alignment, Constraint, Position, Rect},
     style::{Color, Style},
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Cell, Clear, Paragraph, Row, Table},
+    Frame,
 };
 
 use crate::geometry::{CanvasRect, SPoint, SRect};
@@ -433,6 +433,34 @@ fn key_label(code: &KeyCode) -> String {
     }
 }
 
+/// Format a full key binding (modifiers + key code) as a human-readable string.
+///
+/// The `ALT`/`META` modifier is rendered as the nerd-font option symbol `⌥`.
+/// The `SHIFT` modifier is omitted when it is already implied by an uppercase
+/// character key (e.g. `SHIFT+h` is shown as `H`).
+fn binding_label(key: &crate::binding::KeyBinding) -> String {
+    use crossterm::event::KeyModifiers;
+
+    let base = key_label(&key.key);
+
+    // SHIFT implied by an uppercase char — don't repeat it.
+    let show_shift = key.modifiers.contains(KeyModifiers::SHIFT)
+        && !matches!(key.key, KeyCode::Char(c) if c.is_uppercase());
+
+    let mut prefix = String::new();
+    if key.modifiers.contains(KeyModifiers::ALT) {
+        prefix.push_str("⌥+");
+    }
+    if key.modifiers.contains(KeyModifiers::CONTROL) {
+        prefix.push_str("ctrl+");
+    }
+    if show_shift {
+        prefix.push_str("shift+");
+    }
+
+    format!("{}{}", prefix, base)
+}
+
 /// Build `(key_string, description)` pairs for a set of bindings.
 ///
 /// Each `Binding::Single` becomes one row with its key and description.
@@ -443,7 +471,7 @@ fn hint_table_data(bindings: &[crate::binding::Binding]) -> Vec<(String, String)
         .iter()
         .map(|b| match b {
             crate::binding::Binding::Single(inst) => {
-                let key = key_label(&inst.key.key);
+                let key = binding_label(&inst.key);
                 let desc = inst.description.to_string();
                 (key, desc)
             }

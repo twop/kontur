@@ -3,6 +3,7 @@ pub mod binding;
 pub mod geometry;
 pub mod labels;
 pub mod path;
+pub mod scene_save;
 pub mod screen_space;
 pub mod state;
 pub mod ui;
@@ -225,6 +226,26 @@ fn main() -> color_eyre::Result<()> {
                             }
                             UpdateResult::Continue => {}
                             UpdateResult::Actions(follow_up) => queue.extend(follow_up),
+                            UpdateResult::Effect(effect) => match effect {
+                                update::Effect::SaveScene => {
+                                    let snapshot =
+                                        scene_save::to_scene_save(&app.nodes, &app.edges, &app.vp);
+                                    if let Ok(json) = serde_json::to_string_pretty(&snapshot) {
+                                        let _ = std::fs::write("scene.kontur", json);
+                                    }
+                                }
+                                update::Effect::LoadScene => {
+                                    if let Ok(json) = std::fs::read_to_string("scene.kontur") {
+                                        if let Ok(snapshot) =
+                                            serde_json::from_str::<scene_save::SceneSave>(&json)
+                                        {
+                                            let (vp, nodes, edges) =
+                                                scene_save::from_scene_save(snapshot);
+                                            app = AppState::from_parts(nodes, edges, vp);
+                                        }
+                                    }
+                                }
+                            },
                         }
                     }
                     if quit {

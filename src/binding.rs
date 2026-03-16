@@ -336,6 +336,18 @@ pub fn bindings_for_mode(mode: &Mode) -> Vec<Binding> {
             Quit,
             "quit",
         )));
+        bindings.push(Binding::Single(BindingInstance::with_mods(
+            KeyCode::Char('s'),
+            KeyModifiers::ALT,
+            SaveScene,
+            "save scene",
+        )));
+        bindings.push(Binding::Single(BindingInstance::with_mods(
+            KeyCode::Char('l'),
+            KeyModifiers::ALT,
+            LoadScene,
+            "load scene",
+        )));
     }
 
     bindings
