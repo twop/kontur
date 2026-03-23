@@ -20,6 +20,8 @@ use state::{AppState, ArrowDecorations, BlockMode, Edge, Mode, Node, Side};
 use update::{UpdateResult, update};
 use viewport::Viewport;
 
+use crate::binding::{Binding, KeyBinding};
+
 fn format_key(code: KeyCode, mods: KeyModifiers) -> String {
     let key = match code {
         KeyCode::Char(' ') => "space".to_string(),
@@ -156,6 +158,7 @@ fn main() -> color_eyre::Result<()> {
     }
 
     let mut last_tick = Instant::now();
+    let mut menu_keys_sequence: Option<Vec<KeyBinding>> = None;
 
     loop {
         let now = Instant::now();
@@ -163,7 +166,13 @@ fn main() -> color_eyre::Result<()> {
         last_tick = now;
         app.vp.tick(dt);
 
-        let bindings = binding::bindings_for_mode(&app.mode);
+        let mut bindings = binding::bindings_for_mode(&app.mode);
+
+        if let Some(typed_keys) = &menu_keys_sequence
+            && let Some(menu_bindings) = resolve_menu(&bindings, &typed_keys)
+        {
+            bindings = menu_bindings;
+        }
 
         terminal.draw(|frame| {
             ui::render_map(
@@ -187,6 +196,8 @@ fn main() -> color_eyre::Result<()> {
 
                 // Walk bindings in order; the first match wins.
                 let mut action = None;
+                let mut clear_menu = true;
+
                 for b in bindings.iter() {
                     match b {
                         binding::Binding::Single(inst) => {
@@ -212,7 +223,22 @@ fn main() -> color_eyre::Result<()> {
                                 break;
                             }
                         }
+                        binding::Binding::Menu { key: menu_key, .. } => {
+                            if menu_key.key == key.code && menu_key.modifiers == key.modifiers {
+                                clear_menu = false;
+                                if let Some(pressed) = &mut menu_keys_sequence {
+                                    pressed.push(menu_key.clone());
+                                } else {
+                                    menu_keys_sequence = Some(vec![menu_key.clone()]);
+                                }
+                                break;
+                            }
+                        }
                     }
+                }
+
+                if clear_menu {
+                    menu_keys_sequence = None;
                 }
 
                 if let Some(a) = action {
@@ -248,6 +274,7 @@ fn main() -> color_eyre::Result<()> {
                             },
                         }
                     }
+
                     if quit {
                         break;
                     }
@@ -263,4 +290,21 @@ fn main() -> color_eyre::Result<()> {
     )?;
 
     Ok(())
+}
+
+/// Walk `bindings` following `prefix[0]` into a `Binding::Menu`, then recurse
+/// with the remaining prefix keys.  Returns the resolved sub-menu items when
+/// the full prefix is consumed, or None if any step fails to find a
+/// matching `Menu` entry.
+fn resolve_menu(bindings: &[Binding], prefix: &[KeyBinding]) -> Option<Vec<Binding>> {
+    prefix.first().and_then(|pressed_key| {
+        bindings.iter().find_map(|item| match item {
+            Binding::Menu {
+                key,
+                name: _,
+                items,
+            } if key == pressed_key => resolve_menu(items, &prefix[1..]),
+            _ => None,
+        })
+    })
 }

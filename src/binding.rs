@@ -11,7 +11,7 @@ use crate::state::{BlockMode, EdgeEnd, EdgeMode, Mode, Side};
 // ── Key representation ────────────────────────────────────────────────────────
 
 /// A physical key chord: a key code and zero or more modifier keys.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct KeyBinding {
     pub key: KeyCode,
     pub modifiers: KeyModifiers,
@@ -29,6 +29,11 @@ impl KeyBinding {
     /// Constructor for a key with explicit modifiers.
     pub fn with_mods(key: KeyCode, modifiers: KeyModifiers) -> Self {
         Self { key, modifiers }
+    }
+
+    /// Return true if this binding matches the given key event.
+    pub fn matches(&self, code: KeyCode, mods: KeyModifiers) -> bool {
+        self.key == code && self.modifiers == mods
     }
 }
 
@@ -79,6 +84,12 @@ impl From<(KeyCode, Action, &'static str)> for BindingInstance {
     }
 }
 
+impl From<(char, Action, &'static str)> for BindingInstance {
+    fn from((key, action, description): (char, Action, &'static str)) -> Self {
+        Self::new(KeyCode::Char(key), action, description)
+    }
+}
+
 impl From<(KeyCode, KeyModifiers, Action, &'static str)> for BindingInstance {
     fn from(
         (key, modifiers, action, description): (KeyCode, KeyModifiers, Action, &'static str),
@@ -99,8 +110,9 @@ pub struct KeyListen {
 
 // ── Binding enum ──────────────────────────────────────────────────────────────
 
-/// Either a single key binding, a named group of related bindings, or a
-/// catch-all listener for modes driven by free-form input.
+/// Either a single key binding, a named group of related bindings, a
+/// catch-all listener for modes driven by free-form input, or a menu that
+/// opens a nested set of bindings when its trigger key is pressed.
 pub enum Binding {
     /// A standalone key → action mapping.
     Single(BindingInstance),
@@ -112,6 +124,14 @@ pub enum Binding {
     /// A free-form listener that inspects every key event and produces an
     /// optional action.  Useful for text editing and label-selection modes.
     Listen(KeyListen),
+    /// A leader-key menu: pressing `key` pushes it onto the menu prefix and
+    /// reveals `items` as the next level of bindings.  Items may themselves
+    /// contain nested `Menu` entries, enabling arbitrary nesting depth.
+    Menu {
+        key: KeyBinding,
+        name: &'static str,
+        items: Vec<Binding>,
+    },
 }
 
 impl Binding {
@@ -138,18 +158,33 @@ impl Binding {
             handler: Box::new(handler),
         })
     }
+
+    /// Construct a menu binding with the given trigger key, display name, and
+    /// list of child bindings.
+    pub fn menu(
+        key: KeyCode,
+        name: &'static str,
+        items: impl IntoIterator<Item = Binding>,
+    ) -> Self {
+        Binding::Menu {
+            key: KeyBinding::plain(key),
+            name,
+            items: items.into_iter().collect(),
+        }
+    }
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
-/// Return every binding that is active while the application is in `mode`.
-///
-/// Bindings that apply in all modes (e.g. quit) are always included.
+/// Return the bindings that are currently active given the application `mode`
+/// and the already-pressed `menu_prefix` key sequence.
 pub fn bindings_for_mode(mode: &Mode) -> Vec<Binding> {
     use crate::geometry::Dir;
     use Action::*;
 
-    let mut bindings: Vec<Binding> = match mode {
+    // ── Build the top-level binding list for the current mode ─────────────────
+
+    let bindings: Vec<Binding> = match mode {
         // ── SelectedEdge / Selected ───────────────────────────────────────────
         Mode::SelectedEdge(_, EdgeMode::Selected) => vec![
             Binding::single((KeyCode::Char('d'), DeleteEdge, "delete edge")),
@@ -174,10 +209,10 @@ pub fn bindings_for_mode(mode: &Mode) -> Vec<Binding> {
             Binding::group(
                 "set side",
                 [
-                    (KeyCode::Char('h'), SetEdgeSide(Side::Left), "left"),
-                    (KeyCode::Char('j'), SetEdgeSide(Side::Bottom), "down"),
-                    (KeyCode::Char('k'), SetEdgeSide(Side::Top), "up"),
-                    (KeyCode::Char('l'), SetEdgeSide(Side::Right), "right"),
+                    ('h', SetEdgeSide(Side::Left), "left"),
+                    ('j', SetEdgeSide(Side::Bottom), "down"),
+                    ('k', SetEdgeSide(Side::Top), "up"),
+                    ('l', SetEdgeSide(Side::Right), "right"),
                 ],
             ),
             Binding::single((KeyCode::Esc, Cancel, "back")),
@@ -205,8 +240,18 @@ pub fn bindings_for_mode(mode: &Mode) -> Vec<Binding> {
                 ]
                 .map(|(key, dir)| (KeyCode::Char(key), KeyModifiers::SHIFT, Pan(dir, 10), "pan")),
             ),
-            Binding::single((KeyCode::Char('f'), StartSelecting, "jump")),
-            Binding::single((KeyCode::Char('c'), CreateNewNode, "create block")),
+            Binding::single(('f', StartSelecting, "jump")),
+            Binding::single(('c', CreateNewNode, "create block")),
+            // ── Space leader menu ─────────────────────────────────────────────
+            Binding::menu(
+                KeyCode::Char(' '),
+                "menu",
+                [
+                    Binding::single(('q', Quit, "quit")),
+                    Binding::single(('s', SaveScene, "save scene")),
+                    Binding::single(('q', LoadScene, "load scene")),
+                ],
+            ),
         ],
 
         // ── SelectedBlock / Selected ──────────────────────────────────────────
@@ -238,16 +283,12 @@ pub fn bindings_for_mode(mode: &Mode) -> Vec<Binding> {
                     )
                 }),
             ),
-            Binding::single((KeyCode::Char('r'), StartResizing, "resize mode")),
-            Binding::single((KeyCode::Char('i'), StartEditing, "edit label")),
-            Binding::single((KeyCode::Char('e'), StartConnectingEdge, "connect edge")),
-            Binding::single((KeyCode::Char('d'), DeleteShape, "delete")),
-            Binding::single((
-                KeyCode::Char('c'),
-                StartCreatingRelativeNode,
-                "new relative node",
-            )),
-            Binding::single((KeyCode::Char('f'), StartSelecting, "jump")),
+            Binding::single(('r', StartResizing, "resize mode")),
+            Binding::single(('i', StartEditing, "edit label")),
+            Binding::single(('e', StartConnectingEdge, "connect edge")),
+            Binding::single(('d', DeleteShape, "delete")),
+            Binding::single(('c', StartCreatingRelativeNode, "new relative node")),
+            Binding::single(('f', StartSelecting, "jump")),
             Binding::single((KeyCode::Esc, Cancel, "deselect")),
         ],
 
@@ -271,10 +312,10 @@ pub fn bindings_for_mode(mode: &Mode) -> Vec<Binding> {
             Binding::group(
                 "Expand",
                 [
-                    (KeyCode::Char('h'), Expand(Dir::Left), "expand left"),
-                    (KeyCode::Char('l'), Expand(Dir::Right), "expand right"),
-                    (KeyCode::Char('k'), Expand(Dir::Up), "expand up"),
-                    (KeyCode::Char('j'), Expand(Dir::Down), "expand down"),
+                    ('h', Expand(Dir::Left), "expand left"),
+                    ('l', Expand(Dir::Right), "expand right"),
+                    ('k', Expand(Dir::Up), "expand up"),
+                    ('j', Expand(Dir::Down), "expand down"),
                 ],
             ),
             Binding::group(
@@ -328,27 +369,6 @@ pub fn bindings_for_mode(mode: &Mode) -> Vec<Binding> {
             }),
         ],
     };
-
-    // ── Global bindings (active in every mode except Editing) ─────────────────
-    if !matches!(mode, Mode::SelectedBlock(_, BlockMode::Editing { .. })) {
-        bindings.push(Binding::Single(BindingInstance::new(
-            KeyCode::Char('q'),
-            Quit,
-            "quit",
-        )));
-        bindings.push(Binding::Single(BindingInstance::with_mods(
-            KeyCode::Char('s'),
-            KeyModifiers::ALT,
-            SaveScene,
-            "save scene",
-        )));
-        bindings.push(Binding::Single(BindingInstance::with_mods(
-            KeyCode::Char('l'),
-            KeyModifiers::ALT,
-            LoadScene,
-            "load scene",
-        )));
-    }
 
     bindings
 }

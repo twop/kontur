@@ -490,6 +490,10 @@ fn hint_table_data(bindings: &[crate::binding::Binding]) -> Vec<(String, String)
                 let desc = listener.description.to_string();
                 ("…".to_string(), desc)
             }
+            crate::binding::Binding::Menu { key, name, .. } => {
+                let k = binding_label(key);
+                (k, format!("{} >", name))
+            }
         })
         .collect()
 }
