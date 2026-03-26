@@ -1,10 +1,10 @@
 use crossterm::event::KeyCode;
 use ratatui::{
-    Frame,
     layout::{Alignment, Constraint, Position, Rect},
     style::{Color, Style},
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Cell, Clear, Paragraph, Row, Table},
+    Frame,
 };
 
 use crate::geometry::{CanvasRect, SPoint, SRect};
@@ -500,7 +500,10 @@ fn hint_table_data(bindings: &[crate::binding::Binding]) -> Vec<(String, String)
 
 /// Render the hints panel anchored to the bottom-right corner, framed and
 /// aligned using a `Table` widget.
-fn render_hints_panel(frame: &mut Frame, bindings: &[crate::binding::Binding]) {
+///
+/// `header` is displayed as the block title (e.g. the menu name or the current
+/// mode name).
+fn render_hints_panel(frame: &mut Frame, bindings: &[crate::binding::Binding], header: &str) {
     let data = hint_table_data(bindings);
     if data.is_empty() {
         return;
@@ -547,7 +550,9 @@ fn render_hints_panel(frame: &mut Frame, bindings: &[crate::binding::Binding]) {
 
     let area = Rect::new(x, y, panel_w, panel_h);
 
+    let title = format!(" {} ", header);
     let block = Block::default()
+        .title(title.as_str())
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(Color::DarkGray));
@@ -653,6 +658,7 @@ pub fn render_app(
     vp: &Viewport,
     mode: &Mode,
     bindings: &[crate::binding::Binding],
+    hints_header: &str,
     _key_log: &[String],
 ) {
     let fa = frame.area();
@@ -685,7 +691,7 @@ pub fn render_app(
     if let Mode::SelectedEdge(_, EdgeMode::TweakSide { node_id }) = mode {
         render_tweak_side_labels(frame, nodes, vp, *node_id);
     }
-    render_hints_panel(frame, bindings);
+    render_hints_panel(frame, bindings, hints_header);
     render_edge_shape_panel(frame, nodes, edges, mode);
     // render_key_log(frame, _key_log);
     if let Mode::SelectedBlock(_, BlockMode::Editing { input, cursor }) = mode {

@@ -168,17 +168,18 @@ fn main() -> color_eyre::Result<()> {
 
         let mode_bindings = bindings_for_mode(&app.mode);
 
-        let mut bindings = mode_bindings.as_slice();
-
-        if let Some(typed_keys) = &menu_keys_sequence
-            && let Some(menu_bindings) = resolve_menu(&bindings, &typed_keys)
-        {
-            bindings = menu_bindings;
-        }
+        let (bindings, hints_header): (&[Binding], &str) =
+            if let Some(typed_keys) = &menu_keys_sequence
+                && let Some((menu_items, menu_name)) = resolve_menu(&mode_bindings, typed_keys)
+            {
+                (menu_items, menu_name)
+            } else {
+                (mode_bindings.as_slice(), mode_name(&app.mode))
+            };
 
         terminal.draw(|frame| {
             ui::render_app(
-                frame, &app.nodes, &app.edges, &app.vp, &app.mode, &bindings, &key_log,
+                frame, &app.nodes, &app.edges, &app.vp, &app.mode, &bindings, hints_header, &key_log,
             );
         })?;
 
@@ -297,19 +298,39 @@ fn main() -> color_eyre::Result<()> {
 }
 
 /// Walk `bindings` following `prefix[0]` into a `Binding::Menu`, then recurse
-/// with the remaining prefix keys.  Returns the resolved sub-menu items when
-/// the full prefix is consumed, or None if any step fails to find a
-/// matching `Menu` entry.
-fn resolve_menu<'b>(bindings: &'b [Binding], prefix: &[KeyBinding]) -> Option<&'b [Binding]> {
-    match prefix.first() {
-        Some(pressed_key) => bindings.iter().find_map(|item| match item {
-            Binding::Menu {
-                key,
-                name: _,
-                items,
-            } if key == pressed_key => resolve_menu(items, &prefix[1..]),
-            _ => None,
-        }),
-        None => Some(bindings),
+/// with the remaining prefix keys.  Returns the resolved sub-menu items and the
+/// name of the deepest matched menu when the full prefix is consumed, or `None`
+/// if any step fails to find a matching `Menu` entry.
+fn resolve_menu<'b>(
+    bindings: &'b [Binding],
+    prefix: &[KeyBinding],
+) -> Option<(&'b [Binding], &'static str)> {
+    let pressed_key = prefix.first()?;
+    bindings.iter().find_map(|item| match item {
+        Binding::Menu { key, name, items } if key == pressed_key => {
+            if prefix.len() == 1 {
+                Some((items.as_slice(), *name))
+            } else {
+                resolve_menu(items, &prefix[1..])
+            }
+        }
+        _ => None,
+    })
+}
+
+/// Return a short lowercase human-readable name for the current mode.
+fn mode_name(mode: &Mode) -> &'static str {
+    use state::{EdgeMode, BlockMode};
+    match mode {
+        Mode::Normal => "normal",
+        Mode::SelectedBlock(_, BlockMode::Selected) => "block",
+        Mode::SelectedBlock(_, BlockMode::CreatingRelativeNode) => "new node",
+        Mode::SelectedBlock(_, BlockMode::Resizing) => "resize",
+        Mode::SelectedBlock(_, BlockMode::Editing { .. }) => "edit",
+        Mode::SelectedBlock(_, BlockMode::ConnectingEdge { .. }) => "connect",
+        Mode::SelectedEdge(_, EdgeMode::Selected) => "edge",
+        Mode::SelectedEdge(_, EdgeMode::TweakEndpoint) => "tweak endpoint",
+        Mode::SelectedEdge(_, EdgeMode::TweakSide { .. }) => "tweak side",
+        Mode::Selecting { .. } => "select",
     }
 }
