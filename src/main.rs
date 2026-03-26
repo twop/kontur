@@ -20,7 +20,7 @@ use state::{AppState, ArrowDecorations, BlockMode, Edge, Mode, Node, Side};
 use update::{UpdateResult, update};
 use viewport::Viewport;
 
-use crate::binding::{Binding, KeyBinding};
+use crate::binding::{Binding, KeyBinding, bindings_for_mode};
 
 fn format_key(code: KeyCode, mods: KeyModifiers) -> String {
     let key = match code {
@@ -166,7 +166,9 @@ fn main() -> color_eyre::Result<()> {
         last_tick = now;
         app.vp.tick(dt);
 
-        let mut bindings = binding::bindings_for_mode(&app.mode);
+        let mode_bindings = bindings_for_mode(&app.mode);
+
+        let mut bindings = mode_bindings.as_slice();
 
         if let Some(typed_keys) = &menu_keys_sequence
             && let Some(menu_bindings) = resolve_menu(&bindings, &typed_keys)
@@ -197,6 +199,7 @@ fn main() -> color_eyre::Result<()> {
 
                 // Walk bindings in order; the first match wins.
                 let mut action = None;
+                let mut clear_menu = true;
 
                 for b in bindings.iter() {
                     match b {
@@ -219,6 +222,8 @@ fn main() -> color_eyre::Result<()> {
                         }
                         Binding::Menu { key: menu_key, .. } => {
                             if menu_key.matches(key.code, key.modifiers) {
+                                clear_menu = false;
+                                // println!("hitting menu {name}");
                                 if let Some(pressed) = &mut menu_keys_sequence {
                                     pressed.push(menu_key.clone());
                                 } else {
@@ -234,6 +239,10 @@ fn main() -> color_eyre::Result<()> {
                             }
                         }
                     }
+                }
+
+                if clear_menu {
+                    menu_keys_sequence = None;
                 }
 
                 if let Some(a) = action {
@@ -291,15 +300,16 @@ fn main() -> color_eyre::Result<()> {
 /// with the remaining prefix keys.  Returns the resolved sub-menu items when
 /// the full prefix is consumed, or None if any step fails to find a
 /// matching `Menu` entry.
-fn resolve_menu(bindings: &[Binding], prefix: &[KeyBinding]) -> Option<Vec<Binding>> {
-    prefix.first().and_then(|pressed_key| {
-        bindings.iter().find_map(|item| match item {
+fn resolve_menu<'b>(bindings: &'b [Binding], prefix: &[KeyBinding]) -> Option<&'b [Binding]> {
+    match prefix.first() {
+        Some(pressed_key) => bindings.iter().find_map(|item| match item {
             Binding::Menu {
                 key,
                 name: _,
                 items,
             } if key == pressed_key => resolve_menu(items, &prefix[1..]),
             _ => None,
-        })
-    })
+        }),
+        None => Some(bindings),
+    }
 }

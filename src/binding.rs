@@ -249,7 +249,7 @@ pub fn bindings_for_mode(mode: &Mode) -> Vec<Binding> {
                 [
                     Binding::single(('q', Quit, "quit")),
                     Binding::single(('s', SaveScene, "save scene")),
-                    Binding::single(('q', LoadScene, "load scene")),
+                    Binding::single(('l', LoadScene, "load scene")),
                 ],
             ),
         ],
