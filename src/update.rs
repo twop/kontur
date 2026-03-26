@@ -5,6 +5,10 @@
 //
 // Returns `UpdateResult` so the caller knows whether to keep running.
 
+use crossterm::event::{KeyCode, KeyModifiers};
+use ratatui::layout::Size;
+use ratatui_textarea::{CursorMove, Input, Key, TextArea};
+
 use crate::actions::Action;
 use crate::geometry::{CanvasRect, Dir, SPoint, SRect};
 use crate::labels::LabelIter;
@@ -15,7 +19,6 @@ use crate::state::{
     NodeId, Side, Viewport,
 };
 use crate::viewport::AnimationConfig;
-use ratatui::layout::Size;
 
 // ── Per-action animation configs ──────────────────────────────────────────────
 
@@ -140,7 +143,7 @@ pub enum Effect {
     LoadScene,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub enum UpdateResult {
     Continue,
     Quit,
@@ -152,34 +155,59 @@ pub enum UpdateResult {
     Effect(Effect),
 }
 
-// ── Text-editing helpers ──────────────────────────────────────────────────────
+// ── TextArea helpers ──────────────────────────────────────────────────────────
 
-fn clamp_cursor(input: &str, pos: usize) -> usize {
-    pos.clamp(0, input.chars().count())
+/// Build a single-line `TextArea` pre-filled with `text`, cursor at the end.
+fn make_textarea(text: &str) -> TextArea<'static> {
+    let mut ta = TextArea::new(vec![text.to_owned()]);
+    ta.set_cursor_line_style(ratatui::style::Style::default());
+    ta.set_line_number_style(ratatui::style::Style::default());
+    ta.move_cursor(CursorMove::End);
+    ta
 }
 
-fn byte_index(input: &str, cursor: usize) -> usize {
-    input
-        .char_indices()
-        .map(|(i, _)| i)
-        .nth(cursor)
-        .unwrap_or(input.len())
-}
+/// Convert a `crossterm::event::KeyEvent` into a `ratatui_textarea::Input`.
+///
+/// `ratatui_textarea` uses `ratatui`'s re-exported crossterm types, which may
+/// differ from the direct `crossterm` crate types.  We bridge the gap by
+/// constructing `Input` from its public fields.
+fn key_event_to_input(ev: crossterm::event::KeyEvent) -> Input {
+    use crossterm::event::KeyEventKind;
 
-fn input_insert(input: &mut String, cursor: &mut usize, ch: char) {
-    let idx = byte_index(input, *cursor);
-    input.insert(idx, ch);
-    *cursor = clamp_cursor(input, cursor.saturating_add(1));
-}
-
-fn input_delete(input: &mut String, cursor: &mut usize) {
-    if *cursor == 0 {
-        return;
+    // Ignore key-release events (same as ratatui-textarea does internally).
+    if ev.kind == KeyEventKind::Release {
+        return Input::default();
     }
-    let before = input.chars().take(*cursor - 1);
-    let after = input.chars().skip(*cursor);
-    *input = before.chain(after).collect();
-    *cursor = clamp_cursor(input, cursor.saturating_sub(1));
+
+    let ctrl = ev.modifiers.contains(KeyModifiers::CONTROL);
+    let alt = ev.modifiers.contains(KeyModifiers::ALT);
+    let shift = ev.modifiers.contains(KeyModifiers::SHIFT);
+
+    let key = match ev.code {
+        KeyCode::Char(c) => Key::Char(c),
+        KeyCode::Backspace => Key::Backspace,
+        KeyCode::Enter => Key::Enter,
+        KeyCode::Left => Key::Left,
+        KeyCode::Right => Key::Right,
+        KeyCode::Up => Key::Up,
+        KeyCode::Down => Key::Down,
+        KeyCode::Tab => Key::Tab,
+        KeyCode::Delete => Key::Delete,
+        KeyCode::Home => Key::Home,
+        KeyCode::End => Key::End,
+        KeyCode::PageUp => Key::PageUp,
+        KeyCode::PageDown => Key::PageDown,
+        KeyCode::Esc => Key::Esc,
+        KeyCode::F(n) => Key::F(n),
+        _ => Key::Null,
+    };
+
+    Input {
+        key,
+        ctrl,
+        alt,
+        shift,
+    }
 }
 
 // ── Edge side computation ─────────────────────────────────────────────────────
@@ -444,14 +472,11 @@ pub fn update(state: &mut AppState, action: Action, canvas_size: Size) -> Update
                         dir: ArrowDecorations::Forward,
                     });
                     // Immediately enter editing mode on the new node.
-                    state.mode = Mode::SelectedBlock(
-                        new_id,
-                        BlockMode::Editing {
-                            input: String::new(),
-                            cursor: 0,
-                        },
-                    );
-                    return UpdateResult::Actions(vec![Action::FocusSelected]);
+                    state.mode = Mode::SelectedBlock(new_id, BlockMode::Selected);
+                    return UpdateResult::Actions(vec![
+                        Action::StartEditing,
+                        Action::FocusSelected,
+                    ]);
                 }
             }
         }
@@ -476,27 +501,26 @@ pub fn update(state: &mut AppState, action: Action, canvas_size: Size) -> Update
 
         Action::StartEditing => {
             if let Mode::SelectedBlock(id, _) = state.mode {
-                let current = state
-                    .nodes
-                    .iter()
-                    .find(|n| n.id == id)
-                    .map(|n| n.label.clone())
-                    .unwrap_or_default();
-                let cursor = current.chars().count();
-                state.mode = Mode::SelectedBlock(
-                    id,
-                    BlockMode::Editing {
-                        input: current,
-                        cursor,
-                    },
-                );
+                if let Some(node) = state.nodes.iter().find(|n| n.id == id) {
+                    let original_label = node.label.clone();
+                    let original_rect = node.rect;
+                    let textarea = make_textarea(&original_label);
+                    state.mode = Mode::SelectedBlock(
+                        id,
+                        BlockMode::Editing {
+                            textarea,
+                            original_label,
+                            original_rect,
+                        },
+                    );
+                }
             }
         }
 
         Action::Confirm => {
-            if let Mode::SelectedBlock(id, BlockMode::Editing { ref input, .. }) = state.mode {
+            if let Mode::SelectedBlock(id, BlockMode::Editing { ref textarea, .. }) = state.mode {
                 let id = id;
-                let new_label = input.clone();
+                let new_label = textarea.lines()[0].clone();
                 if let Some(node) = state.nodes.iter_mut().find(|n| n.id == id) {
                     node.label = new_label;
                 }
@@ -505,8 +529,22 @@ pub fn update(state: &mut AppState, action: Action, canvas_size: Size) -> Update
         }
 
         Action::Cancel => match &state.mode {
-            Mode::SelectedBlock(id, BlockMode::Editing { .. }) => {
-                state.mode = Mode::SelectedBlock(*id, BlockMode::Selected);
+            Mode::SelectedBlock(
+                id,
+                BlockMode::Editing {
+                    original_label,
+                    original_rect,
+                    ..
+                },
+            ) => {
+                let id = *id;
+                let label = original_label.clone();
+                let rect = *original_rect;
+                if let Some(node) = state.nodes.iter_mut().find(|n| n.id == id) {
+                    node.label = label;
+                    node.rect = rect;
+                }
+                state.mode = Mode::SelectedBlock(id, BlockMode::Selected);
             }
             Mode::SelectedBlock(id, BlockMode::CreatingRelativeNode) => {
                 state.mode = Mode::SelectedBlock(*id, BlockMode::Selected);
@@ -537,55 +575,25 @@ pub fn update(state: &mut AppState, action: Action, canvas_size: Size) -> Update
         },
 
         // ── Text editing ──────────────────────────────────────────────────────
-        Action::InsertChar(ch) => {
+        Action::TextAreaInput(key_event) => {
             if let Mode::SelectedBlock(
-                _,
+                id,
                 BlockMode::Editing {
-                    ref mut input,
-                    ref mut cursor,
+                    ref mut textarea, ..
                 },
             ) = state.mode
             {
-                input_insert(input, cursor, ch);
-            }
-        }
+                textarea.input(key_event_to_input(key_event));
 
-        Action::DeleteChar => {
-            if let Mode::SelectedBlock(
-                _,
-                BlockMode::Editing {
-                    ref mut input,
-                    ref mut cursor,
-                },
-            ) = state.mode
-            {
-                input_delete(input, cursor);
-            }
-        }
-
-        Action::CursorLeft => {
-            if let Mode::SelectedBlock(
-                _,
-                BlockMode::Editing {
-                    ref input,
-                    ref mut cursor,
-                },
-            ) = state.mode
-            {
-                *cursor = clamp_cursor(input, cursor.saturating_sub(1));
-            }
-        }
-
-        Action::CursorRight => {
-            if let Mode::SelectedBlock(
-                _,
-                BlockMode::Editing {
-                    ref input,
-                    ref mut cursor,
-                },
-            ) = state.mode
-            {
-                *cursor = clamp_cursor(input, cursor.saturating_add(1));
+                // Resize the node to the right if the text has grown beyond
+                // the current inner width (node width − 2 border columns).
+                let text_len = textarea.lines()[0].chars().count() as u16;
+                if let Some(node) = state.nodes.iter_mut().find(|n| n.id == id) {
+                    let inner_w = node.rect.size.width.saturating_sub(2);
+                    if text_len > inner_w {
+                        node.rect.size.width += text_len - inner_w;
+                    }
+                }
             }
         }
 

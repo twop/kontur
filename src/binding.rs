@@ -341,13 +341,11 @@ pub fn bindings_for_mode(mode: &Mode) -> Vec<Binding> {
         // ── SelectedBlock / Editing ───────────────────────────────────────────
         Mode::SelectedBlock(_, BlockMode::Editing { .. }) => {
             vec![Binding::listen("edit label text", |ev| match ev.code {
+                // These two are intercepted by the app before reaching the textarea.
                 KeyCode::Enter => Some(Confirm),
                 KeyCode::Esc => Some(Cancel),
-                KeyCode::Backspace => Some(DeleteChar),
-                KeyCode::Left => Some(CursorLeft),
-                KeyCode::Right => Some(CursorRight),
-                KeyCode::Char(ch) => Some(InsertChar(ch)),
-                _ => None,
+                // Everything else is forwarded verbatim to the TextArea widget.
+                _ => Some(TextAreaInput(ev)),
             })]
         }
 

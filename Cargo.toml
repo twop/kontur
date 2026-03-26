@@ -4,8 +4,9 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-ratatui   = "0.30"
-crossterm = "0.28"
+ratatui           = "0.30"
+ratatui-textarea  = "0.8"
+crossterm         = "0.28"
 color-eyre = "0.6"
 indoc = "2.0.7"
 damped-springs = "1"

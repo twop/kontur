@@ -4,10 +4,12 @@
 // represented here.  The update loop translates raw key events into one of
 // these variants and then applies the resulting state change.
 
+use crossterm::event::KeyEvent;
+
 use crate::geometry::Dir;
 use crate::state::{EdgeEnd, EdgeId, NodeId, Side};
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub enum Action {
     // ── Viewport panning (Normal mode) ────────────────────────────────────────
     Pan(Dir, u32),
@@ -35,10 +37,8 @@ pub enum Action {
     Cancel,
 
     // ── Editing ───────────────────────────────────────────────────────────────
-    InsertChar(char),
-    DeleteChar,
-    CursorLeft,
-    CursorRight,
+    /// Pass a raw key event through to the active TextArea widget.
+    TextAreaInput(KeyEvent),
 
     // ── Selection / jump ──────────────────────────────────────────────────────
     /// A printable character was typed while in Selecting mode.

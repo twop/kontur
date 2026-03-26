@@ -12,10 +12,24 @@ use crate::path::{self, PathError};
 use crate::screen_space::Screen;
 use crate::state::{BlockMode, Edge, EdgeId, EdgeMode, Mode, Node, NodeId, Side, Viewport};
 
+// ── Editing node ID helper ────────────────────────────────────────────────────
+
+/// If the mode is `SelectedBlock(id, Editing { .. })`, return the node id and a
+/// reference to the textarea.  Used in `render_nodes` to decide whether to
+/// render the inline editor instead of a paragraph.
+fn editing_state(mode: &Mode) -> Option<(NodeId, &ratatui_textarea::TextArea<'static>)> {
+    if let Mode::SelectedBlock(id, BlockMode::Editing { textarea, .. }) = mode {
+        Some((*id, textarea))
+    } else {
+        None
+    }
+}
+
 // ── Node rendering ────────────────────────────────────────────────────────────
 
 fn render_nodes(frame: &mut Frame, nodes: &[Node], vp: &Viewport, mode: &Mode) {
     let frame_canvas_rect = CanvasRect::from_center(vp.animated_center(), frame.area().as_size());
+    let editing = editing_state(mode);
 
     for node in nodes {
         let node_rect = node.rect;
@@ -44,12 +58,21 @@ fn render_nodes(frame: &mut Frame, nodes: &[Node], vp: &Viewport, mode: &Mode) {
         }
 
         let is_selected = matches!(mode, Mode::SelectedBlock(id, _) if *id == node.id);
+        let is_editing = editing.as_ref().is_some_and(|(id, _)| *id == node.id);
 
         let area = Screen::to_ratatui_rect(Screen::rect(vp, clipped), frame_canvas_rect.size);
 
         frame.render_widget(Clear, area);
 
-        let block = if is_selected {
+        // While editing: yellow double border, no title (cursor is in the textarea).
+        // While selected: yellow double border with label as title.
+        // Normal: plain border with label as title.
+        let block = if is_editing {
+            Block::default()
+                .borders(borders)
+                .border_type(BorderType::Double)
+                .border_style(Style::default().fg(Color::Yellow))
+        } else if is_selected {
             Block::default()
                 .borders(borders)
                 .border_type(BorderType::Double)
@@ -63,8 +86,15 @@ fn render_nodes(frame: &mut Frame, nodes: &[Node], vp: &Viewport, mode: &Mode) {
         frame.render_widget(block, area);
 
         if inner.width > 0 && inner.height > 0 {
-            let para = Paragraph::new(node.label.as_str()).alignment(Alignment::Center);
-            frame.render_widget(para, inner);
+            if is_editing {
+                // Render the TextArea widget inline — it owns cursor rendering.
+                if let Some((_, textarea)) = &editing {
+                    frame.render_widget(*textarea, inner);
+                }
+            } else {
+                let para = Paragraph::new(node.label.as_str()).alignment(Alignment::Center);
+                frame.render_widget(para, inner);
+            }
         }
     }
 }
@@ -385,35 +415,6 @@ fn render_tweak_side_labels(frame: &mut Frame, nodes: &[Node], vp: &Viewport, no
     }
 }
 
-// ── Edit popup ────────────────────────────────────────────────────────────────
-
-fn popup_area(area: Rect, percent_x: u16, rows: u16) -> Rect {
-    use ratatui::layout::{Constraint, Flex, Layout};
-    let vertical = Layout::vertical([Constraint::Length(rows)]).flex(Flex::Center);
-    let horizontal = Layout::horizontal([Constraint::Percentage(percent_x)]).flex(Flex::Center);
-    let [area] = vertical.areas(area);
-    let [area] = horizontal.areas(area);
-    area
-}
-
-fn render_popup(frame: &mut Frame, input: &str, cursor: usize) {
-    use ratatui::layout::Position;
-
-    let area = popup_area(frame.area(), 50, 3);
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Yellow))
-        .title(" Edit label ");
-
-    let inner = block.inner(area);
-    frame.render_widget(Clear, area);
-    frame.render_widget(block, area);
-    frame.render_widget(Paragraph::new(input), inner);
-
-    #[allow(clippy::cast_possible_truncation)]
-    frame.set_cursor_position(Position::new(inner.x + cursor as u16, inner.y));
-}
-
 // ── Hints panel ───────────────────────────────────────────────────────────────
 
 /// Format a `KeyCode` as a short human-readable string.
@@ -694,7 +695,4 @@ pub fn render_app(
     render_hints_panel(frame, bindings, hints_header);
     render_edge_shape_panel(frame, nodes, edges, mode);
     // render_key_log(frame, _key_log);
-    if let Mode::SelectedBlock(_, BlockMode::Editing { input, cursor }) = mode {
-        render_popup(frame, input, *cursor);
-    }
 }

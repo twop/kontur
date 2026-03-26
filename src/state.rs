@@ -77,15 +77,19 @@ pub enum EdgeMode {
 }
 
 // ── Application mode ──────────────────────────────────────────────────────────
-#[derive(Clone, PartialEq)]
+#[derive(Clone)]
+#[allow(clippy::large_enum_variant)]
 pub enum BlockMode {
     Selected,
     // Moving,
     CreatingRelativeNode,
     Resizing,
     Editing {
-        input: String,
-        cursor: usize,
+        textarea: ratatui_textarea::TextArea<'static>,
+        /// Label the node had when editing started — restored on Esc.
+        original_label: String,
+        /// Rect the node had when editing started — restored on Esc.
+        original_rect: SRect,
     },
     /// Label-driven edge creation: shows jump labels on all other visible nodes;
     /// typing a label creates an edge from the source node to the chosen target.
@@ -95,7 +99,7 @@ pub enum BlockMode {
     },
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone)]
 pub enum Mode {
     Normal,
     SelectedBlock(NodeId, BlockMode),
