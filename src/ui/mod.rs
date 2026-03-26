@@ -1,10 +1,10 @@
 use crossterm::event::KeyCode;
 use ratatui::{
+    Frame,
     layout::{Alignment, Constraint, Position, Rect},
     style::{Color, Style},
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Cell, Clear, Paragraph, Row, Table},
-    Frame,
 };
 
 use crate::geometry::{CanvasRect, SPoint, SRect};
@@ -646,7 +646,7 @@ fn render_key_log(frame: &mut Frame, key_log: &[String]) {
 
 // ── Top-level render ──────────────────────────────────────────────────────────
 
-pub fn render_map(
+pub fn render_app(
     frame: &mut Frame,
     nodes: &[Node],
     edges: &[Edge],

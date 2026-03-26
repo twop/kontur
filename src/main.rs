@@ -175,7 +175,7 @@ fn main() -> color_eyre::Result<()> {
         }
 
         terminal.draw(|frame| {
-            ui::render_map(
+            ui::render_app(
                 frame, &app.nodes, &app.edges, &app.vp, &app.mode, &bindings, &key_log,
             );
         })?;
@@ -183,7 +183,8 @@ fn main() -> color_eyre::Result<()> {
         // Use a short timeout while an animation is running so the spring /
         // tween renders smoothly (~60 fps).  Fall back to 50 ms when idle to
         // avoid busy-looping when nothing is happening.
-        let poll_ms = if app.vp.is_animating() { 16 } else { 50 };
+        let poll_ms = if app.vp.is_animating() { 33 } else { 60 };
+
         if crossterm::event::poll(std::time::Duration::from_millis(poll_ms))? {
             if let crossterm::event::Event::Key(key) = crossterm::event::read()? {
                 key_log.insert(0, format_key(key.code, key.modifiers));
@@ -196,36 +197,28 @@ fn main() -> color_eyre::Result<()> {
 
                 // Walk bindings in order; the first match wins.
                 let mut action = None;
-                let mut clear_menu = true;
 
                 for b in bindings.iter() {
                     match b {
-                        binding::Binding::Single(inst) => {
-                            if inst.key.key == key.code && inst.key.modifiers == key.modifiers {
+                        Binding::Single(inst) => {
+                            if inst.key.matches(key.code, key.modifiers) {
                                 action = Some(inst.action.clone());
                                 break;
                             }
                         }
-                        binding::Binding::Group {
+                        Binding::Group {
                             bindings: members, ..
                         } => {
                             if let Some(inst) = members
                                 .iter()
-                                .find(|i| i.key.key == key.code && i.key.modifiers == key.modifiers)
+                                .find(|inst| inst.key.matches(key.code, key.modifiers))
                             {
                                 action = Some(inst.action.clone());
                                 break;
                             }
                         }
-                        binding::Binding::Listen(listener) => {
-                            if let Some(a) = (listener.handler)(key) {
-                                action = Some(a);
-                                break;
-                            }
-                        }
-                        binding::Binding::Menu { key: menu_key, .. } => {
-                            if menu_key.key == key.code && menu_key.modifiers == key.modifiers {
-                                clear_menu = false;
+                        Binding::Menu { key: menu_key, .. } => {
+                            if menu_key.matches(key.code, key.modifiers) {
                                 if let Some(pressed) = &mut menu_keys_sequence {
                                     pressed.push(menu_key.clone());
                                 } else {
@@ -234,11 +227,13 @@ fn main() -> color_eyre::Result<()> {
                                 break;
                             }
                         }
+                        Binding::Listen(listener) => {
+                            if let Some(a) = (listener.handler)(key) {
+                                action = Some(a);
+                                break;
+                            }
+                        }
                     }
-                }
-
-                if clear_menu {
-                    menu_keys_sequence = None;
                 }
 
                 if let Some(a) = action {
