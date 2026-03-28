@@ -298,18 +298,10 @@ pub fn update(state: &mut AppState, action: Action, canvas_size: Size) -> Update
         }
 
         Action::CreateNewNode => {
-            // Default size for every new node.
-            const NEW_W: u16 = 16;
-            const NEW_H: u16 = 5;
-
-            let rect = SRect::from_center(state.vp.center(), Size::new(NEW_W, NEW_H));
-
             let id = state.new_node_id();
-            state.nodes.push(Node {
-                id,
-                rect,
-                label: String::new(),
-            });
+            state
+                .nodes
+                .push(Node::content_layout(id, state.vp.center(), String::new()));
 
             state.mode = Mode::SelectedBlock(id, BlockMode::Selected);
             return UpdateResult::Actions(vec![Action::StartEditing, Action::FocusSelected]);
@@ -430,25 +422,34 @@ pub fn update(state: &mut AppState, action: Action, canvas_size: Size) -> Update
 
         Action::CreateRelativeNode(dir) => {
             if let Mode::SelectedBlock(src_id, BlockMode::CreatingRelativeNode) = state.mode {
-                // Default size for every new node.
-                const NEW_W: u16 = 16;
-                const NEW_H: u16 = 5;
+                let new_id = state.new_node_id();
+                let mut new_node = Node::content_layout(new_id, SPoint::new(0, 0), String::new());
+                let node_size = new_node.rect.size;
+
                 // Gap in cells between the source node border and the new node border.
                 const GAP: i32 = 2;
 
-                let new_rect = if let Some(src) = state.nodes.iter().find(|n| n.id == src_id) {
-                    let (nx, ny) = match dir {
+                let new_origin = if let Some(src) = state.nodes.iter().find(|n| n.id == src_id) {
+                    let origin = match dir {
                         Dir::Right => (src.rect.right() + 1 + GAP, src.rect.origin.y),
-                        Dir::Left => (src.rect.left() - GAP - NEW_W as i32, src.rect.origin.y),
+                        Dir::Left => (
+                            src.rect.left() - GAP - node_size.width as i32,
+                            src.rect.origin.y,
+                        ),
                         Dir::Down => (src.rect.origin.x, src.rect.bottom() + 1 + GAP),
-                        Dir::Up => (src.rect.origin.x, src.rect.top() - GAP - NEW_H as i32),
+                        Dir::Up => (
+                            src.rect.origin.x,
+                            src.rect.top() - GAP - node_size.width as i32,
+                        ),
                     };
-                    Some(SRect::new(nx, ny, NEW_W, NEW_H))
+                    Some(origin)
                 } else {
                     None
                 };
 
-                if let Some(rect) = new_rect {
+                if let Some((x, y)) = new_origin {
+                    new_node.rect.origin = SPoint::new(x, y);
+
                     let (from_side, to_side) = match dir {
                         Dir::Right => (Side::Right, Side::Left),
                         Dir::Left => (Side::Left, Side::Right),
@@ -456,13 +457,8 @@ pub fn update(state: &mut AppState, action: Action, canvas_size: Size) -> Update
                         Dir::Up => (Side::Top, Side::Bottom),
                     };
 
-                    let new_id = state.new_node_id();
                     let new_edge_id = state.new_edge_id();
-                    state.nodes.push(Node {
-                        id: new_id,
-                        rect,
-                        label: String::new(),
-                    });
+                    state.nodes.push(new_node);
                     state.edges.push(Edge {
                         id: new_edge_id,
                         from_id: src_id,

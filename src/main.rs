@@ -51,26 +51,14 @@ fn bootstrap_demo_graph(app: &mut AppState) {
     let gamma = app.new_node_id();
     let delta = app.new_node_id();
 
-    app.nodes.push(Node {
-        id: alpha,
-        rect: SRect::new(5, 5, 16, 5),
-        label: "Alpha".to_string(),
-    });
-    app.nodes.push(Node {
-        id: beta,
-        rect: SRect::new(35, 5, 16, 5),
-        label: "Beta".to_string(),
-    });
-    app.nodes.push(Node {
-        id: gamma,
-        rect: SRect::new(35, 18, 16, 5),
-        label: "Gamma".to_string(),
-    });
-    app.nodes.push(Node {
-        id: delta,
-        rect: SRect::new(5, 18, 16, 5),
-        label: "Delta".to_string(),
-    });
+    app.nodes
+        .push(Node::content_layout(alpha, SPoint::new(5, 5), "Alpha"));
+    app.nodes
+        .push(Node::content_layout(beta, SPoint::new(35, 5), "Beta"));
+    app.nodes
+        .push(Node::content_layout(gamma, SPoint::new(35, 18), "Gamma"));
+    app.nodes
+        .push(Node::content_layout(delta, SPoint::new(5, 18), "Delta"));
 
     let e0 = app.new_edge_id();
     let e1 = app.new_edge_id();
@@ -114,16 +102,13 @@ fn bootstrap_small_demo_graph(app: &mut AppState) {
     let alpha = app.new_node_id();
     let beta = app.new_node_id();
 
-    app.nodes.push(Node {
-        id: alpha,
-        rect: SRect::new(-5, -3, 10, 3),
-        label: "alpha".to_string(),
-    });
-    app.nodes.push(Node {
-        id: beta,
-        rect: SRect::new(-5, 2, 10, 3),
-        label: "beta".to_string(),
-    });
+    app.nodes.push(Node::manual_layout(
+        alpha,
+        SRect::new(-5, -3, 10, 3),
+        "alpha",
+    ));
+    app.nodes
+        .push(Node::manual_layout(beta, SRect::new(-5, 2, 10, 3), "beta"));
 
     let a_to_b = app.new_edge_id();
     app.edges.push(Edge {
@@ -168,18 +153,25 @@ fn main() -> color_eyre::Result<()> {
 
         let mode_bindings = bindings_for_mode(&app.mode);
 
-        let (bindings, hints_header): (&[Binding], &str) =
-            if let Some(typed_keys) = &menu_keys_sequence
-                && let Some((menu_items, menu_name)) = resolve_menu(&mode_bindings, typed_keys)
-            {
-                (menu_items, menu_name)
-            } else {
-                (mode_bindings.as_slice(), mode_name(&app.mode))
-            };
+        let (bindings, hints_header): (&[Binding], &str) = if let Some(typed_keys) =
+            &menu_keys_sequence
+            && let Some((menu_items, menu_name)) = resolve_menu(&mode_bindings, typed_keys)
+        {
+            (menu_items, menu_name)
+        } else {
+            (mode_bindings.as_slice(), mode_name(&app.mode))
+        };
 
         terminal.draw(|frame| {
             ui::render_app(
-                frame, &app.nodes, &app.edges, &app.vp, &app.mode, &bindings, hints_header, &key_log,
+                frame,
+                &app.nodes,
+                &app.edges,
+                &app.vp,
+                &app.mode,
+                &bindings,
+                hints_header,
+                &key_log,
             );
         })?;
 
@@ -320,7 +312,7 @@ fn resolve_menu<'b>(
 
 /// Return a short lowercase human-readable name for the current mode.
 fn mode_name(mode: &Mode) -> &'static str {
-    use state::{EdgeMode, BlockMode};
+    use state::{BlockMode, EdgeMode};
     match mode {
         Mode::Normal => "normal",
         Mode::SelectedBlock(_, BlockMode::Selected) => "block",

@@ -1900,11 +1900,7 @@ mod tests {
 
     fn make_node(id: usize, (x, y): (i32, i32), (w, h): (u16, u16)) -> Node {
         assert!(w >= 3 && h >= 3, "nodes must be at least 3×3");
-        Node {
-            id: NodeId::hacky(id),
-            rect: SRect::new(x, y, w, h),
-            label: id.to_string(),
-        }
+        Node::manual_layout(NodeId::hacky(id), SRect::new(x, y, w, h), id.to_string())
     }
 
     // Both nodes expose their Right side — A is above B, same column.

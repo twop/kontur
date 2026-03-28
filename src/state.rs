@@ -1,7 +1,13 @@
 // ── Types ────────────────────────────────────────────────────────────────────
 
-use crate::geometry::SRect;
+use ratatui::widgets::StatefulWidget;
+
+use crate::geometry::{SPoint, SRect};
 pub use crate::viewport::{AnimationConfig, Viewport};
+
+/// Padding (in cells) added on each side between a node's label and its border
+/// when the node rect is computed automatically from the label text.
+pub const NODE_PADDING: u8 = 1;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct NodeId(pub(crate) usize);
@@ -39,11 +45,66 @@ pub enum ArrowDecorations {
     Both,     // arrowheads at both ends
 }
 
-#[allow(dead_code)]
+pub enum NodeLayoutMode {
+    Manual,
+    WrapContent { padding: u8 },
+}
+
 pub struct Node {
     pub id: NodeId,
     pub rect: SRect,
     pub label: String,
+    pub layout_mode: NodeLayoutMode,
+}
+
+impl Node {
+    /// Create a node with an explicitly supplied rectangle (manual layout).
+    pub fn manual_layout(id: NodeId, rect: SRect, label: impl Into<String>) -> Self {
+        Self {
+            id,
+            rect,
+            label: label.into(),
+            layout_mode: NodeLayoutMode::Manual,
+        }
+    }
+
+    /// Create a node whose size is calculated from the label text.
+    ///
+    /// Width  = longest line length + 2 × [`NODE_PADDING`] + 2 border columns.
+    /// Height = number of lines     + 2 × [`NODE_PADDING`] + 2 border rows.
+    ///
+    /// Both dimensions are clamped to a minimum of 3 so the rest of the
+    /// codebase's "nodes must be at least 3×3" invariant is always satisfied.
+    pub fn content_layout(id: NodeId, origin: SPoint, label: impl Into<String>) -> Self {
+        Self::content_layout_with_padding(id, origin, label, NODE_PADDING)
+    }
+
+    /// Create a node whose size is calculated from the label text. With custom padding around the node
+    ///
+    /// Width  = longest line length + 2 × [`NODE_PADDING`] + 2 border columns.
+    /// Height = number of lines     + 2 × [`NODE_PADDING`] + 2 border rows.
+    ///
+    /// Both dimensions are clamped to a minimum of 3 so the rest of the
+    /// codebase's "nodes must be at least 3×3" invariant is always satisfied.
+    pub fn content_layout_with_padding(
+        id: NodeId,
+        origin: SPoint,
+        label: impl Into<String>,
+        padding: u8,
+    ) -> Self {
+        let label = label.into();
+        let lines: Vec<&str> = label.split('\n').collect();
+        let max_chars = lines.iter().map(|l| l.chars().count()).max().unwrap_or(0) as u16;
+        let line_count = lines.len() as u16;
+        let width = (max_chars + 2 * padding as u16 + 2).max(3);
+        let height = (line_count + 2 * padding as u16 + 2).max(3);
+        Self {
+            id,
+            rect: SRect::new(origin.x, origin.y, width, height),
+            label,
+            layout_mode: NodeLayoutMode::WrapContent { padding },
+        }
+    }
 }
 
 pub struct Edge {

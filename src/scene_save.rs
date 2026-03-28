@@ -11,7 +11,9 @@
 use serde::{Deserialize, Serialize};
 
 use crate::geometry::{SPoint, SRect};
-use crate::state::{ArrowDecorations, Edge, EdgeId, Node, NodeId, Side, Viewport};
+use crate::state::{
+    ArrowDecorations, Edge, EdgeId, NODE_PADDING, Node, NodeId, NodeLayoutMode, Side, Viewport,
+};
 
 // ── Mirror enums ──────────────────────────────────────────────────────────────
 
@@ -78,6 +80,25 @@ impl From<ArrowSave> for ArrowDecorations {
 
 // ── Serializable node / edge ──────────────────────────────────────────────────
 
+/// Serializable mirror of [`NodeLayoutMode`].
+#[derive(Serialize, Deserialize, Clone, Copy)]
+#[serde(rename_all = "snake_case")]
+enum LayoutModeSave {
+    Manual,
+    WrapContent { padding: u8 },
+}
+
+impl From<&NodeLayoutMode> for LayoutModeSave {
+    fn from(m: &NodeLayoutMode) -> Self {
+        match m {
+            NodeLayoutMode::Manual => LayoutModeSave::Manual,
+            NodeLayoutMode::WrapContent { padding } => {
+                LayoutModeSave::WrapContent { padding: *padding }
+            }
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize)]
 pub struct NodeSave {
     id: usize,
@@ -86,6 +107,9 @@ pub struct NodeSave {
     width: u16,
     height: u16,
     label: String,
+    /// Absent in older saves — defaults to [`Auto`](LayoutModeSave::Auto).
+    #[serde(default)]
+    layout_mode: Option<LayoutModeSave>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -123,6 +147,7 @@ pub fn to_scene_save(nodes: &[Node], edges: &[Edge], vp: &Viewport) -> SceneSave
             width: n.rect.size.width,
             height: n.rect.size.height,
             label: n.label.clone(),
+            layout_mode: Some(LayoutModeSave::from(&n.layout_mode)),
         })
         .collect();
 
@@ -156,10 +181,19 @@ pub fn from_scene_save(save: SceneSave) -> (Viewport, Vec<Node>, Vec<Edge>) {
     let nodes: Vec<Node> = save
         .nodes
         .iter()
-        .map(|n| Node {
-            id: NodeId(n.id),
-            rect: SRect::new(n.x, n.y, n.width, n.height),
-            label: n.label.clone(),
+        .map(|n| {
+            match n.layout_mode.unwrap_or(LayoutModeSave::WrapContent {
+                padding: NODE_PADDING,
+            }) {
+                LayoutModeSave::Manual => Node::manual_layout(
+                    NodeId(n.id),
+                    SRect::new(n.x, n.y, n.width, n.height),
+                    n.label.clone(),
+                ),
+                LayoutModeSave::WrapContent { padding } => {
+                    Node::content_layout(NodeId(n.id), SPoint::new(n.x, n.y), n.label.clone())
+                }
+            }
         })
         .collect();
 
