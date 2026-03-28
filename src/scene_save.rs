@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::geometry::{SPoint, SRect};
 use crate::state::{
-    ArrowDecorations, Edge, EdgeId, NODE_PADDING, Node, NodeId, NodeLayoutMode, Side, Viewport,
+    ArrowDecorations, Edge, EdgeId, Node, NodeId, NodeLayoutMode, Padding, Side, Viewport,
 };
 
 // ── Mirror enums ──────────────────────────────────────────────────────────────
@@ -27,8 +27,8 @@ enum SideSave {
     Right,
 }
 
-impl From<Side> for SideSave {
-    fn from(s: Side) -> Self {
+impl SideSave {
+    fn from_logic(s: Side) -> Self {
         match s {
             Side::Top => SideSave::Top,
             Side::Bottom => SideSave::Bottom,
@@ -36,11 +36,8 @@ impl From<Side> for SideSave {
             Side::Right => SideSave::Right,
         }
     }
-}
-
-impl From<SideSave> for Side {
-    fn from(s: SideSave) -> Self {
-        match s {
+    fn to_logic(self) -> Side {
+        match self {
             SideSave::Top => Side::Top,
             SideSave::Bottom => Side::Bottom,
             SideSave::Left => Side::Left,
@@ -58,19 +55,16 @@ enum ArrowSave {
     Both,
 }
 
-impl From<ArrowDecorations> for ArrowSave {
-    fn from(a: ArrowDecorations) -> Self {
+impl ArrowSave {
+    fn from_logic(a: ArrowDecorations) -> Self {
         match a {
             ArrowDecorations::Forward => ArrowSave::Forward,
             ArrowDecorations::Backward => ArrowSave::Backward,
             ArrowDecorations::Both => ArrowSave::Both,
         }
     }
-}
-
-impl From<ArrowSave> for ArrowDecorations {
-    fn from(a: ArrowSave) -> Self {
-        match a {
+    fn to_logic(self) -> ArrowDecorations {
+        match self {
             ArrowSave::Forward => ArrowDecorations::Forward,
             ArrowSave::Backward => ArrowDecorations::Backward,
             ArrowSave::Both => ArrowDecorations::Both,
@@ -80,21 +74,39 @@ impl From<ArrowSave> for ArrowDecorations {
 
 // ── Serializable node / edge ──────────────────────────────────────────────────
 
+/// Serializable mirror of [`Padding`]: `(left, top, right, bottom)`.
+#[derive(Serialize, Deserialize, Clone, Copy)]
+struct PaddingSave(u8, u8, u8, u8);
+
+impl PaddingSave {
+    fn from_logic(p: &Padding) -> Self {
+        Self(p.left, p.top, p.right, p.bottom)
+    }
+    fn to_logic(self) -> Padding {
+        Padding {
+            left: self.0,
+            top: self.1,
+            right: self.2,
+            bottom: self.3,
+        }
+    }
+}
+
 /// Serializable mirror of [`NodeLayoutMode`].
 #[derive(Serialize, Deserialize, Clone, Copy)]
 #[serde(rename_all = "snake_case")]
 enum LayoutModeSave {
     Manual,
-    WrapContent { padding: u8 },
+    WrapContent { padding: PaddingSave },
 }
 
-impl From<&NodeLayoutMode> for LayoutModeSave {
-    fn from(m: &NodeLayoutMode) -> Self {
+impl LayoutModeSave {
+    fn from_logic(m: &NodeLayoutMode) -> Self {
         match m {
             NodeLayoutMode::Manual => LayoutModeSave::Manual,
-            NodeLayoutMode::WrapContent { padding } => {
-                LayoutModeSave::WrapContent { padding: *padding }
-            }
+            NodeLayoutMode::WrapContent { padding } => LayoutModeSave::WrapContent {
+                padding: PaddingSave::from_logic(padding),
+            },
         }
     }
 }
@@ -147,7 +159,7 @@ pub fn to_scene_save(nodes: &[Node], edges: &[Edge], vp: &Viewport) -> SceneSave
             width: n.rect.size.width,
             height: n.rect.size.height,
             label: n.label.clone(),
-            layout_mode: Some(LayoutModeSave::from(&n.layout_mode)),
+            layout_mode: Some(LayoutModeSave::from_logic(&n.layout_mode)),
         })
         .collect();
 
@@ -156,10 +168,10 @@ pub fn to_scene_save(nodes: &[Node], edges: &[Edge], vp: &Viewport) -> SceneSave
         .map(|e| EdgeSave {
             id: e.id.0,
             from_id: e.from_id.0,
-            from_side: e.from_side.into(),
+            from_side: SideSave::from_logic(e.from_side),
             to_id: e.to_id.0,
-            to_side: e.to_side.into(),
-            dir: e.dir.into(),
+            to_side: SideSave::from_logic(e.to_side),
+            dir: ArrowSave::from_logic(e.dir),
         })
         .collect();
 
@@ -183,16 +195,19 @@ pub fn from_scene_save(save: SceneSave) -> (Viewport, Vec<Node>, Vec<Edge>) {
         .iter()
         .map(|n| {
             match n.layout_mode.unwrap_or(LayoutModeSave::WrapContent {
-                padding: NODE_PADDING,
+                padding: PaddingSave::from_logic(&Padding::default()),
             }) {
                 LayoutModeSave::Manual => Node::manual_layout(
                     NodeId(n.id),
                     SRect::new(n.x, n.y, n.width, n.height),
                     n.label.clone(),
                 ),
-                LayoutModeSave::WrapContent { padding } => {
-                    Node::content_layout(NodeId(n.id), SPoint::new(n.x, n.y), n.label.clone())
-                }
+                LayoutModeSave::WrapContent { padding } => Node::content_layout_with_padding(
+                    NodeId(n.id),
+                    SPoint::new(n.x, n.y),
+                    n.label.clone(),
+                    PaddingSave::to_logic(padding),
+                ),
             }
         })
         .collect();
@@ -203,10 +218,10 @@ pub fn from_scene_save(save: SceneSave) -> (Viewport, Vec<Node>, Vec<Edge>) {
         .map(|e| Edge {
             id: EdgeId(e.id),
             from_id: NodeId(e.from_id),
-            from_side: e.from_side.into(),
+            from_side: e.from_side.to_logic(),
             to_id: NodeId(e.to_id),
-            to_side: e.to_side.into(),
-            dir: e.dir.into(),
+            to_side: e.to_side.to_logic(),
+            dir: e.dir.to_logic(),
         })
         .collect();
 
