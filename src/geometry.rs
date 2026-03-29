@@ -1,6 +1,28 @@
 use std::marker::PhantomData;
 
+use color_eyre::owo_colors::colors::xterm::OrientBlue;
 use ratatui::layout::{Rect, Size};
+
+/// Padding (in cells) added on each side between a node's label and its border
+/// when the node rect is computed automatically from the label text.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Padding {
+    pub left: u8,
+    pub top: u8,
+    pub right: u8,
+    pub bottom: u8,
+}
+
+impl Default for Padding {
+    fn default() -> Self {
+        Self {
+            left: 1,
+            top: 0,
+            right: 1,
+            bottom: 0,
+        }
+    }
+}
 
 // ── Coordinate-space markers ───────────────────────────────────────────────────
 
@@ -193,6 +215,11 @@ impl<S> SRect<S> {
             size.width,
             size.height,
         )
+    }
+
+    /// Create a rect where top left is `origin` with specified `size`
+    pub fn from_origin(origin: SPoint<S>, size: Size) -> Self {
+        Self::new(origin.x, origin.y, size.width, size.height)
     }
 
     // ── Corner accessors ──────────────────────────────────────────────────────

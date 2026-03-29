@@ -1,30 +1,9 @@
 // ── Types ────────────────────────────────────────────────────────────────────
 
-use ratatui::widgets::StatefulWidget;
+use ratatui::{layout::Size, widgets::StatefulWidget};
 
-use crate::geometry::{SPoint, SRect};
+use crate::geometry::{Padding, SPoint, SRect};
 pub use crate::viewport::{AnimationConfig, Viewport};
-
-/// Padding (in cells) added on each side between a node's label and its border
-/// when the node rect is computed automatically from the label text.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct Padding {
-    pub left: u8,
-    pub top: u8,
-    pub right: u8,
-    pub bottom: u8,
-}
-
-impl Default for Padding {
-    fn default() -> Self {
-        Self {
-            left: 1,
-            top: 0,
-            right: 1,
-            bottom: 0,
-        }
-    }
-}
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct NodeId(pub(crate) usize);
@@ -110,18 +89,29 @@ impl Node {
         padding: Padding,
     ) -> Self {
         let label = label.into();
-        let lines: Vec<&str> = label.split('\n').collect();
-        let max_chars = lines.iter().map(|l| l.chars().count()).max().unwrap_or(0) as u16;
-        let line_count = lines.len() as u16;
-        let width = (max_chars + padding.left as u16 + padding.right as u16 + 2).max(3);
-        let height = (line_count + padding.top as u16 + padding.bottom as u16 + 2).max(3);
+        let max_chars = label
+            .split('\n')
+            .map(|l| l.chars().count())
+            .max()
+            .unwrap_or(0) as u16;
+        let line_count = label.split('\n').count() as u16;
+
+        let rect = create_node_rect_with_padding(origin, padding, Size::new(max_chars, line_count));
+
         Self {
             id,
-            rect: SRect::new(origin.x, origin.y, width, height),
+            rect,
             label,
             layout_mode: NodeLayoutMode::WrapContent { padding },
         }
     }
+}
+
+pub fn create_node_rect_with_padding(origin: SPoint, padding: Padding, size: Size) -> SRect {
+    let width = (size.width + padding.left as u16 + padding.right as u16 + 2).max(3);
+    let height = (size.height + padding.top as u16 + padding.bottom as u16 + 2).max(3);
+    let rect = SRect::from_origin(origin, Size::new(width, height));
+    rect
 }
 
 pub struct Edge {

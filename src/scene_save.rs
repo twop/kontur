@@ -10,10 +10,8 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::geometry::{SPoint, SRect};
-use crate::state::{
-    ArrowDecorations, Edge, EdgeId, Node, NodeId, NodeLayoutMode, Padding, Side, Viewport,
-};
+use crate::geometry::{Padding, SPoint, SRect};
+use crate::state::{ArrowDecorations, Edge, EdgeId, Node, NodeId, NodeLayoutMode, Side, Viewport};
 
 // ── Mirror enums ──────────────────────────────────────────────────────────────
 

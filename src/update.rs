@@ -10,13 +10,13 @@ use ratatui::layout::Size;
 use ratatui_textarea::{CursorMove, Input, Key, TextArea};
 
 use crate::actions::Action;
-use crate::geometry::{CanvasRect, Dir, SPoint, SRect};
+use crate::geometry::{CanvasRect, Dir, Padding, SPoint, SRect};
 use crate::labels::LabelIter;
 use crate::path;
 
 use crate::state::{
     AppState, ArrowDecorations, BlockMode, Edge, EdgeEnd, EdgeId, EdgeMode, GraphId, Mode, Node,
-    NodeId, Side, Viewport,
+    NodeId, NodeLayoutMode, Side, Viewport, create_node_rect_with_padding,
 };
 use crate::viewport::AnimationConfig;
 
@@ -161,7 +161,8 @@ pub enum UpdateResult {
 fn make_textarea(text: &str) -> TextArea<'static> {
     let mut ta = TextArea::new(vec![text.to_owned()]);
     ta.set_cursor_line_style(ratatui::style::Style::default());
-    ta.set_line_number_style(ratatui::style::Style::default());
+    ta.remove_line_number();
+    // ta.set_line_number_style(ratatui::style::Style::default());
     ta.move_cursor(CursorMove::End);
     ta
 }
@@ -515,7 +516,6 @@ pub fn update(state: &mut AppState, action: Action, canvas_size: Size) -> Update
 
         Action::Confirm => {
             if let Mode::SelectedBlock(id, BlockMode::Editing { ref textarea, .. }) = state.mode {
-                let id = id;
                 let new_label = textarea.lines()[0].clone();
                 if let Some(node) = state.nodes.iter_mut().find(|n| n.id == id) {
                     node.label = new_label;
@@ -578,18 +578,39 @@ pub fn update(state: &mut AppState, action: Action, canvas_size: Size) -> Update
                     ref mut textarea, ..
                 },
             ) = state.mode
+                && let Some(ref mut node) = state.nodes.iter_mut().find(|n| n.id == id)
             {
                 textarea.input(key_event_to_input(key_event));
 
                 // Resize the node to the right if the text has grown beyond
                 // the current inner width (node width − 2 border columns).
                 let text_len = textarea.lines()[0].chars().count() as u16;
-                if let Some(node) = state.nodes.iter_mut().find(|n| n.id == id) {
-                    let inner_w = node.rect.size.width.saturating_sub(2);
-                    if text_len > inner_w {
-                        node.rect.size.width += text_len - inner_w;
-                    }
+                let inner_w = node.rect.size.width.saturating_sub(2);
+                if text_len > inner_w {
+                    node.rect.size.width += text_len - inner_w;
                 }
+
+                let padding = if let NodeLayoutMode::WrapContent { padding } = node.layout_mode {
+                    padding
+                } else {
+                    let padding = Padding::default();
+                    node.layout_mode = NodeLayoutMode::WrapContent { padding };
+                    padding
+                };
+
+                let max_chars = textarea
+                    .lines()
+                    .iter()
+                    .map(|l| l.chars().count())
+                    .max()
+                    .unwrap_or(0) as u16;
+                let line_count = textarea.lines().len() as u16;
+
+                node.rect = create_node_rect_with_padding(
+                    node.rect.origin,
+                    padding,
+                    Size::new(max_chars, line_count),
+                );
             }
         }
 
