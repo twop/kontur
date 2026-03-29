@@ -176,6 +176,15 @@ impl Binding {
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
+/// Items shared by every space-leader menu (Normal and SelectedBlock).
+fn space_menu_items() -> impl IntoIterator<Item = Binding> {
+    [
+        Binding::single((KeyCode::Char('q'), Action::Quit, "quit")),
+        Binding::single((KeyCode::Char('s'), Action::SaveScene, "save scene")),
+        Binding::single((KeyCode::Char('l'), Action::LoadScene, "load scene")),
+    ]
+}
+
 /// Return the bindings that are currently active given the application `mode`
 /// and the already-pressed `menu_prefix` key sequence.
 pub fn bindings_for_mode(mode: &Mode) -> Vec<Binding> {
@@ -243,15 +252,7 @@ pub fn bindings_for_mode(mode: &Mode) -> Vec<Binding> {
             Binding::single(('f', StartSelecting, "jump")),
             Binding::single(('c', CreateNewNode, "create block")),
             // ── Space leader menu ─────────────────────────────────────────────
-            Binding::menu(
-                KeyCode::Char(' '),
-                "menu",
-                [
-                    Binding::single(('q', Quit, "quit")),
-                    Binding::single(('s', SaveScene, "save scene")),
-                    Binding::single(('l', LoadScene, "load scene")),
-                ],
-            ),
+            Binding::menu(KeyCode::Char(' '), "menu", space_menu_items()),
         ],
 
         // ── SelectedBlock / Selected ──────────────────────────────────────────
@@ -290,6 +291,7 @@ pub fn bindings_for_mode(mode: &Mode) -> Vec<Binding> {
             Binding::single(('c', StartCreatingRelativeNode, "new relative node")),
             Binding::single(('f', StartSelecting, "jump")),
             Binding::single((KeyCode::Esc, Cancel, "deselect")),
+            Binding::menu(KeyCode::Char(' '), "menu", space_menu_items()),
         ],
 
         // ── SelectedBlock / CreatingRelativeNode ─────────────────────────────
@@ -340,13 +342,15 @@ pub fn bindings_for_mode(mode: &Mode) -> Vec<Binding> {
 
         // ── SelectedBlock / Editing ───────────────────────────────────────────
         Mode::SelectedBlock(_, BlockMode::Editing { .. }) => {
-            vec![Binding::listen("edit label text", |ev| match ev.code {
-                // These two are intercepted by the app before reaching the textarea.
-                KeyCode::Enter => Some(Confirm),
-                KeyCode::Esc => Some(Cancel),
-                // Everything else is forwarded verbatim to the TextArea widget.
-                _ => Some(TextAreaInput(ev)),
-            })]
+            vec![
+                Binding::single((KeyCode::Esc, Confirm, "apply and exit")),
+                Binding::listen("edit label text", |ev| match ev.code {
+                    // Esc is handled by the explicit binding above.
+                    KeyCode::Esc => None,
+                    // Everything else (including Enter) is forwarded verbatim to the TextArea widget.
+                    _ => Some(TextAreaInput(ev)),
+                }),
+            ]
         }
 
         // ── SelectedBlock / ConnectingEdge ────────────────────────────────────
