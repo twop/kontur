@@ -101,7 +101,11 @@ impl Node {
             .unwrap_or(0) as u16;
         let line_count = label.split('\n').count() as u16;
 
-        let rect = create_node_rect_with_padding(origin, padding, Size::new(max_chars, line_count));
+        let rect = create_node_rect_with_padding(
+            origin,
+            padding,
+            Size::new(max_chars.max(1), line_count.max(1)),
+        );
 
         Self {
             id,
@@ -114,8 +118,9 @@ impl Node {
 }
 
 pub fn create_node_rect_with_padding(origin: SPoint, padding: Padding, size: Size) -> SRect {
-    let width = (size.width + padding.left as u16 + padding.right as u16 + 2).max(3);
-    let height = (size.height + padding.top as u16 + padding.bottom as u16 + 2).max(3);
+    // border takes 1 on each side, hence "+2"
+    let width = size.width + padding.left as u16 + padding.right as u16 + 2;
+    let height = size.height + padding.top as u16 + padding.bottom as u16 + 2;
     let rect = SRect::from_origin(origin, Size::new(width, height));
     rect
 }

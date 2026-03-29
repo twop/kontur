@@ -580,15 +580,6 @@ pub fn update(state: &mut AppState, action: Action, canvas_size: Size) -> Update
                 && let Some(ref mut node) = state.nodes.iter_mut().find(|n| n.id == id)
             {
                 textarea.input(key_event_to_input(key_event));
-
-                // Resize the node to the right if the text has grown beyond
-                // the current inner width (node width − 2 border columns).
-                let text_len = textarea.lines()[0].chars().count() as u16;
-                let inner_w = node.rect.size.width.saturating_sub(2);
-                if text_len > inner_w {
-                    node.rect.size.width += text_len - inner_w;
-                }
-
                 let padding = node.padding;
 
                 let max_chars = textarea
@@ -602,7 +593,7 @@ pub fn update(state: &mut AppState, action: Action, canvas_size: Size) -> Update
                 node.rect = create_node_rect_with_padding(
                     node.rect.origin,
                     padding,
-                    Size::new(max_chars, line_count),
+                    Size::new(max_chars.max(1), line_count.max(1)),
                 );
             }
         }
