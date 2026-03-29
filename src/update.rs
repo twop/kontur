@@ -590,13 +590,7 @@ pub fn update(state: &mut AppState, action: Action, canvas_size: Size) -> Update
                     node.rect.size.width += text_len - inner_w;
                 }
 
-                let padding = if let NodeLayoutMode::WrapContent { padding } = node.layout_mode {
-                    padding
-                } else {
-                    let padding = Padding::default();
-                    node.layout_mode = NodeLayoutMode::WrapContent { padding };
-                    padding
-                };
+                let padding = node.padding;
 
                 let max_chars = textarea
                     .lines()

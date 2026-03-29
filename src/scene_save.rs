@@ -95,16 +95,14 @@ impl PaddingSave {
 #[serde(rename_all = "snake_case")]
 enum LayoutModeSave {
     Manual,
-    WrapContent { padding: PaddingSave },
+    WrapContent,
 }
 
 impl LayoutModeSave {
     fn from_logic(m: &NodeLayoutMode) -> Self {
         match m {
             NodeLayoutMode::Manual => LayoutModeSave::Manual,
-            NodeLayoutMode::WrapContent { padding } => LayoutModeSave::WrapContent {
-                padding: PaddingSave::from_logic(padding),
-            },
+            NodeLayoutMode::WrapContent => LayoutModeSave::WrapContent,
         }
     }
 }
@@ -117,9 +115,8 @@ pub struct NodeSave {
     width: u16,
     height: u16,
     label: String,
-    /// Absent in older saves — defaults to [`Auto`](LayoutModeSave::Auto).
-    #[serde(default)]
-    layout_mode: Option<LayoutModeSave>,
+    layout_mode: LayoutModeSave,
+    padding: PaddingSave,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -157,7 +154,8 @@ pub fn to_scene_save(nodes: &[Node], edges: &[Edge], vp: &Viewport) -> SceneSave
             width: n.rect.size.width,
             height: n.rect.size.height,
             label: n.label.clone(),
-            layout_mode: Some(LayoutModeSave::from_logic(&n.layout_mode)),
+            layout_mode: LayoutModeSave::from_logic(&n.layout_mode),
+            padding: PaddingSave::from_logic(&n.padding),
         })
         .collect();
 
@@ -191,22 +189,18 @@ pub fn from_scene_save(save: SceneSave) -> (Viewport, Vec<Node>, Vec<Edge>) {
     let nodes: Vec<Node> = save
         .nodes
         .iter()
-        .map(|n| {
-            match n.layout_mode.unwrap_or(LayoutModeSave::WrapContent {
-                padding: PaddingSave::from_logic(&Padding::default()),
-            }) {
-                LayoutModeSave::Manual => Node::manual_layout(
-                    NodeId(n.id),
-                    SRect::new(n.x, n.y, n.width, n.height),
-                    n.label.clone(),
-                ),
-                LayoutModeSave::WrapContent { padding } => Node::content_layout_with_padding(
-                    NodeId(n.id),
-                    SPoint::new(n.x, n.y),
-                    n.label.clone(),
-                    PaddingSave::to_logic(padding),
-                ),
-            }
+        .map(|n| match n.layout_mode {
+            LayoutModeSave::Manual => Node::manual_layout(
+                NodeId(n.id),
+                SRect::new(n.x, n.y, n.width, n.height),
+                n.label.clone(),
+            ),
+            LayoutModeSave::WrapContent => Node::content_layout_with_padding(
+                NodeId(n.id),
+                SPoint::new(n.x, n.y),
+                n.label.clone(),
+                PaddingSave::to_logic(n.padding),
+            ),
         })
         .collect();
 

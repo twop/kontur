@@ -43,13 +43,14 @@ pub enum ArrowDecorations {
 
 pub enum NodeLayoutMode {
     Manual,
-    WrapContent { padding: Padding },
+    WrapContent,
 }
 
 pub struct Node {
     pub id: NodeId,
     pub rect: SRect,
     pub label: String,
+    pub padding: Padding,
     pub layout_mode: NodeLayoutMode,
 }
 
@@ -60,6 +61,7 @@ impl Node {
             id,
             rect,
             label: label.into(),
+            padding: Padding::default(),
             layout_mode: NodeLayoutMode::Manual,
         }
     }
@@ -102,7 +104,8 @@ impl Node {
             id,
             rect,
             label,
-            layout_mode: NodeLayoutMode::WrapContent { padding },
+            padding,
+            layout_mode: NodeLayoutMode::WrapContent,
         }
     }
 }
