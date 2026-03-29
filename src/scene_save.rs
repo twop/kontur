@@ -153,7 +153,7 @@ pub fn to_scene_save(nodes: &[Node], edges: &[Edge], vp: &Viewport) -> SceneSave
             y: n.rect.origin.y,
             width: n.rect.size.width,
             height: n.rect.size.height,
-            label: n.label.clone(),
+            label: n.lines.clone().join("\n"),
             layout_mode: LayoutModeSave::from_logic(&n.layout_mode),
             padding: PaddingSave::from_logic(&n.padding),
         })

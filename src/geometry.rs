@@ -13,6 +13,17 @@ pub struct Padding {
     pub bottom: u8,
 }
 
+impl Padding {
+    pub fn to_ratatui(&self) -> ratatui::widgets::Padding {
+        ratatui::widgets::Padding {
+            left: self.left as u16,
+            right: self.right as u16,
+            top: self.top as u16,
+            bottom: self.bottom as u16,
+        }
+    }
+}
+
 impl Default for Padding {
     fn default() -> Self {
         Self {

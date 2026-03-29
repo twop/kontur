@@ -1,6 +1,7 @@
 // ── Types ────────────────────────────────────────────────────────────────────
 
 use ratatui::{layout::Size, widgets::StatefulWidget};
+use smallvec::SmallVec;
 
 use crate::geometry::{Padding, SPoint, SRect};
 pub use crate::viewport::{AnimationConfig, Viewport};
@@ -46,10 +47,12 @@ pub enum NodeLayoutMode {
     WrapContent,
 }
 
+pub type LinesVec = SmallVec<[String; 1]>;
+
 pub struct Node {
     pub id: NodeId,
     pub rect: SRect,
-    pub label: String,
+    pub lines: LinesVec,
     pub padding: Padding,
     pub layout_mode: NodeLayoutMode,
 }
@@ -60,7 +63,7 @@ impl Node {
         Self {
             id,
             rect,
-            label: label.into(),
+            lines: LinesVec::from_iter(label.into().split('\n').map(|l| l.to_string())),
             padding: Padding::default(),
             layout_mode: NodeLayoutMode::Manual,
         }
@@ -90,7 +93,7 @@ impl Node {
         label: impl Into<String>,
         padding: Padding,
     ) -> Self {
-        let label = label.into();
+        let label: String = label.into();
         let max_chars = label
             .split('\n')
             .map(|l| l.chars().count())
@@ -103,7 +106,7 @@ impl Node {
         Self {
             id,
             rect,
-            label,
+            lines: LinesVec::from_iter(label.split('\n').map(|l| l.to_string())),
             padding,
             layout_mode: NodeLayoutMode::WrapContent,
         }
@@ -158,7 +161,7 @@ pub enum BlockMode {
     Editing {
         textarea: ratatui_textarea::TextArea<'static>,
         /// Label the node had when editing started — restored on Esc.
-        original_label: String,
+        original_label: LinesVec,
         /// Rect the node had when editing started — restored on Esc.
         original_rect: SRect,
     },

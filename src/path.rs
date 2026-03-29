@@ -1339,7 +1339,14 @@ mod tests {
 
         // Draw nodes first (path symbols are painted on top afterwards).
         for node in nodes {
-            let id_char = node.label.chars().next().unwrap_or('?');
+            let id_char = node
+                .lines
+                .first()
+                .map(|s| s.as_str())
+                .unwrap_or("")
+                .chars()
+                .next()
+                .unwrap_or('?');
             let nx = (node.rect.origin.x - ox) as usize;
             let ny = (node.rect.origin.y - oy) as usize;
             let nw = node.rect.size.width as usize;

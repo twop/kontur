@@ -15,8 +15,8 @@ use crate::labels::LabelIter;
 use crate::path;
 
 use crate::state::{
-    AppState, ArrowDecorations, BlockMode, Edge, EdgeEnd, EdgeId, EdgeMode, GraphId, Mode, Node,
-    NodeId, NodeLayoutMode, Side, Viewport, create_node_rect_with_padding,
+    AppState, ArrowDecorations, BlockMode, Edge, EdgeEnd, EdgeId, EdgeMode, GraphId, LinesVec,
+    Mode, Node, NodeId, NodeLayoutMode, Side, Viewport, create_node_rect_with_padding,
 };
 use crate::viewport::AnimationConfig;
 
@@ -158,8 +158,8 @@ pub enum UpdateResult {
 // ── TextArea helpers ──────────────────────────────────────────────────────────
 
 /// Build a single-line `TextArea` pre-filled with `text`, cursor at the end.
-fn make_textarea(text: &str) -> TextArea<'static> {
-    let mut ta = TextArea::new(vec![text.to_owned()]);
+fn make_textarea(text: &[String]) -> TextArea<'static> {
+    let mut ta = TextArea::new(Vec::from(text));
     ta.set_cursor_line_style(ratatui::style::Style::default());
     ta.remove_line_number();
     // ta.set_line_number_style(ratatui::style::Style::default());
@@ -499,7 +499,7 @@ pub fn update(state: &mut AppState, action: Action, canvas_size: Size) -> Update
         Action::StartEditing => {
             if let Mode::SelectedBlock(id, _) = state.mode {
                 if let Some(node) = state.nodes.iter().find(|n| n.id == id) {
-                    let original_label = node.label.clone();
+                    let original_label = node.lines.clone();
                     let original_rect = node.rect;
                     let textarea = make_textarea(&original_label);
                     state.mode = Mode::SelectedBlock(
@@ -516,9 +516,8 @@ pub fn update(state: &mut AppState, action: Action, canvas_size: Size) -> Update
 
         Action::Confirm => {
             if let Mode::SelectedBlock(id, BlockMode::Editing { ref textarea, .. }) = state.mode {
-                let new_label = textarea.lines()[0].clone();
                 if let Some(node) = state.nodes.iter_mut().find(|n| n.id == id) {
-                    node.label = new_label;
+                    node.lines = LinesVec::from(textarea.lines());
                 }
                 state.mode = Mode::SelectedBlock(id, BlockMode::Selected);
             }
@@ -537,7 +536,7 @@ pub fn update(state: &mut AppState, action: Action, canvas_size: Size) -> Update
                 let label = original_label.clone();
                 let rect = *original_rect;
                 if let Some(node) = state.nodes.iter_mut().find(|n| n.id == id) {
-                    node.label = label;
+                    node.lines = label;
                     node.rect = rect;
                 }
                 state.mode = Mode::SelectedBlock(id, BlockMode::Selected);

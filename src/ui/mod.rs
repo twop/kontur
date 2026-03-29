@@ -1,10 +1,10 @@
 use crossterm::event::KeyCode;
 use ratatui::{
-    layout::{Alignment, Constraint, Position, Rect},
+    Frame,
+    layout::{Alignment, Constraint, Offset, Position, Rect},
     style::{Color, Style},
     text::{Line, Span},
-    widgets::{Block, BorderType, Borders, Cell, Clear, Paragraph, Row, Table},
-    Frame,
+    widgets::{Block, BorderType, Borders, Cell, Clear, Padding, Paragraph, Row, Table},
 };
 
 use crate::geometry::{CanvasRect, SPoint, SRect};
@@ -77,23 +77,33 @@ fn render_nodes(frame: &mut Frame, nodes: &[Node], vp: &Viewport, mode: &Mode) {
                 .borders(borders)
                 .border_type(BorderType::Double)
                 .border_style(Style::default().fg(Color::Yellow))
-                .title(node.label.as_str())
+            // .title(node.lines[0].as_str())
         } else {
-            Block::default().borders(borders).title(node.label.as_str())
-        };
+            Block::default().borders(borders)
+            // .title(node.lines[0].as_str())
+        }
+        .padding(node.padding.to_ratatui());
 
-        let inner = block.inner(area);
+        let content_area = block.inner(area);
         frame.render_widget(block, area);
 
-        if inner.width > 0 && inner.height > 0 {
+        if content_area.width > 0 && content_area.height > 0 {
             if is_editing {
                 // Render the TextArea widget inline — it owns cursor rendering.
                 if let Some((_, textarea)) = &editing {
-                    frame.render_widget(*textarea, inner);
+                    // note that the weird offset thing is for accomodating the cursor
+                    frame.render_widget(
+                        *textarea,
+                        content_area.union(content_area.offset(Offset::new(1, 0))),
+                    );
                 }
             } else {
-                let para = Paragraph::new(node.label.as_str()).alignment(Alignment::Center);
-                frame.render_widget(para, inner);
+                if content_area.width > 0 && content_area.height > 0 {
+                    use ratatui::text::Text;
+                    let text = Text::from_iter(node.lines.iter().map(|l| Line::from(l.as_str())));
+                    let para = Paragraph::new(text).alignment(Alignment::Left);
+                    frame.render_widget(para, content_area);
+                }
             }
         }
     }

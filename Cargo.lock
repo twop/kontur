@@ -629,6 +629,7 @@ dependencies = [
  "ratatui-textarea",
  "serde",
  "serde_json",
+ "smallvec",
  "tween",
 ]
 
