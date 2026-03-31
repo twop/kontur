@@ -287,6 +287,7 @@ pub fn bindings_for_mode(mode: &Mode) -> Vec<Binding> {
             Binding::single(('r', StartResizing, "resize mode")),
             Binding::single(('i', StartEditing, "edit label")),
             Binding::single(('e', StartConnectingEdge, "connect edge")),
+            Binding::single(('p', StartPropEditing, "properties")),
             Binding::single(('d', DeleteShape, "delete")),
             Binding::single(('c', StartCreatingRelativeNode, "new relative node")),
             Binding::single(('f', StartSelecting, "jump")),
@@ -360,6 +361,16 @@ pub fn bindings_for_mode(mode: &Mode) -> Vec<Binding> {
                 KeyCode::Char(ch) => Some(SelectChar(ch)),
                 _ => None,
             }),
+        ],
+
+        // ── SelectedBlock / PropEditing ───────────────────────────────────────
+        Mode::SelectedBlock(_, BlockMode::PropEditing { .. }) => vec![
+            Binding::single(('k', PropNavUp, "prev section")),
+            Binding::single(('j', PropNavDown, "next section")),
+            Binding::single(('h', PropNavLeft, "prev option")),
+            Binding::single(('l', PropNavRight, "next option")),
+            Binding::single((KeyCode::Char(' '), ApplyCurrentPropItem, "apply")),
+            Binding::single((KeyCode::Esc, Cancel, "close")),
         ],
 
         // ── Selecting (jump-to-node) ──────────────────────────────────────────

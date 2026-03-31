@@ -3,6 +3,7 @@ pub mod binding;
 pub mod geometry;
 pub mod labels;
 pub mod path;
+pub mod prop_panel;
 pub mod scene_save;
 pub mod screen_space;
 pub mod state;
@@ -320,6 +321,7 @@ fn mode_name(mode: &Mode) -> &'static str {
         Mode::SelectedBlock(_, BlockMode::Resizing) => "resize",
         Mode::SelectedBlock(_, BlockMode::Editing { .. }) => "edit",
         Mode::SelectedBlock(_, BlockMode::ConnectingEdge { .. }) => "connect",
+        Mode::SelectedBlock(_, BlockMode::PropEditing { .. }) => "props",
         Mode::SelectedEdge(_, EdgeMode::Selected) => "edge",
         Mode::SelectedEdge(_, EdgeMode::TweakEndpoint) => "tweak endpoint",
         Mode::SelectedEdge(_, EdgeMode::TweakSide { .. }) => "tweak side",

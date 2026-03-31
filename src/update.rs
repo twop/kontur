@@ -10,13 +10,14 @@ use ratatui::layout::Size;
 use ratatui_textarea::{CursorMove, Input, Key, TextArea};
 
 use crate::actions::Action;
-use crate::geometry::{CanvasRect, Dir, Padding, SPoint, SRect};
+use crate::geometry::{CanvasRect, Dir, SPoint};
 use crate::labels::LabelIter;
 use crate::path;
+use crate::prop_panel::node_prop_panel;
 
 use crate::state::{
     AppState, ArrowDecorations, BlockMode, Edge, EdgeEnd, EdgeId, EdgeMode, GraphId, LinesVec,
-    Mode, Node, NodeId, NodeLayoutMode, Side, Viewport, create_node_rect_with_padding,
+    Mode, Node, NodeId, Side, Viewport, create_node_rect_with_padding,
 };
 use crate::viewport::AnimationConfig;
 
@@ -514,6 +515,75 @@ pub fn update(state: &mut AppState, action: Action, canvas_size: Size) -> Update
             }
         }
 
+        Action::StartPropEditing => {
+            if let Mode::SelectedBlock(id, _) = state.mode {
+                if let Some(node) = state.nodes.iter().find(|n| n.id == id) {
+                    let panel = node_prop_panel(&node.props);
+                    state.mode = Mode::SelectedBlock(id, BlockMode::PropEditing { panel });
+                }
+            }
+        }
+
+        // ── Property panel navigation ─────────────────────────────────────────
+        Action::PropNavUp => {
+            if let Mode::SelectedBlock(_, BlockMode::PropEditing { ref mut panel }) = state.mode {
+                panel.move_up();
+            }
+        }
+
+        Action::PropNavDown => {
+            if let Mode::SelectedBlock(_, BlockMode::PropEditing { ref mut panel }) = state.mode {
+                panel.move_down();
+            }
+        }
+
+        Action::PropNavLeft => {
+            if let Mode::SelectedBlock(_, BlockMode::PropEditing { ref mut panel }) = state.mode {
+                panel.move_left();
+            }
+        }
+
+        Action::PropNavRight => {
+            if let Mode::SelectedBlock(_, BlockMode::PropEditing { ref mut panel }) = state.mode {
+                panel.move_right();
+            }
+        }
+
+        Action::ApplyCurrentPropItem => {
+            if let Mode::SelectedBlock(_, BlockMode::PropEditing { ref panel }) = state.mode {
+                if let Some(action) = panel.current_action() {
+                    return UpdateResult::Actions(vec![action]);
+                }
+            }
+        }
+
+        Action::SetNodeProp(change) => {
+            if let Mode::SelectedBlock(id, _) = state.mode {
+                if let Some(node) = state.nodes.iter_mut().find(|n| n.id == id) {
+                    node.props.apply(change);
+                }
+                // Rebuild panel preserving cursor position.
+                if let Mode::SelectedBlock(id, BlockMode::PropEditing { ref mut panel }) =
+                    state.mode
+                {
+                    let old_section = panel.focused_section;
+                    let old_item = panel.focused_item;
+                    if let Some(node) = state.nodes.iter().find(|n| n.id == id) {
+                        let mut new_panel = node_prop_panel(&node.props);
+                        let section_max = new_panel.sections.len().saturating_sub(1);
+                        new_panel.focused_section = old_section.min(section_max);
+                        let item_max = new_panel
+                            .sections
+                            .get(new_panel.focused_section)
+                            .map(|s| s.items.len().saturating_sub(1))
+                            .unwrap_or(0);
+                        new_panel.focused_item = old_item.min(item_max);
+                        *panel = new_panel;
+                    }
+                }
+            }
+        }
+
         Action::Confirm => {
             if let Mode::SelectedBlock(id, BlockMode::Editing { ref textarea, .. }) = state.mode {
                 if let Some(node) = state.nodes.iter_mut().find(|n| n.id == id) {
@@ -548,6 +618,9 @@ pub fn update(state: &mut AppState, action: Action, canvas_size: Size) -> Update
                 state.mode = Mode::SelectedBlock(*id, BlockMode::Selected);
             }
             Mode::SelectedBlock(id, BlockMode::ConnectingEdge { .. }) => {
+                state.mode = Mode::SelectedBlock(*id, BlockMode::Selected);
+            }
+            Mode::SelectedBlock(id, BlockMode::PropEditing { .. }) => {
                 state.mode = Mode::SelectedBlock(*id, BlockMode::Selected);
             }
             Mode::SelectedBlock(_, BlockMode::Selected) => {

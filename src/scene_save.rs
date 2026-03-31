@@ -11,7 +11,10 @@
 use serde::{Deserialize, Serialize};
 
 use crate::geometry::{Padding, SPoint, SRect};
-use crate::state::{ArrowDecorations, Edge, EdgeId, Node, NodeId, NodeLayoutMode, Side, Viewport};
+use crate::state::{
+    ArrowDecorations, CornerStyle, Edge, EdgeId, Node, NodeId, NodeLayoutMode, Side, TextAlignH,
+    TextAlignV, Viewport,
+};
 
 // ── Mirror enums ──────────────────────────────────────────────────────────────
 
@@ -91,9 +94,10 @@ impl PaddingSave {
 }
 
 /// Serializable mirror of [`NodeLayoutMode`].
-#[derive(Serialize, Deserialize, Clone, Copy)]
+#[derive(Serialize, Deserialize, Clone, Copy, Default)]
 #[serde(rename_all = "snake_case")]
 enum LayoutModeSave {
+    #[default]
     Manual,
     WrapContent,
 }
@@ -103,6 +107,90 @@ impl LayoutModeSave {
         match m {
             NodeLayoutMode::Manual => LayoutModeSave::Manual,
             NodeLayoutMode::WrapContent => LayoutModeSave::WrapContent,
+        }
+    }
+    fn to_logic(self) -> NodeLayoutMode {
+        match self {
+            LayoutModeSave::Manual => NodeLayoutMode::Manual,
+            LayoutModeSave::WrapContent => NodeLayoutMode::WrapContent,
+        }
+    }
+}
+
+/// Serializable mirror of [`CornerStyle`].
+#[derive(Serialize, Deserialize, Clone, Copy, Default)]
+#[serde(rename_all = "snake_case")]
+enum CornerStyleSave {
+    #[default]
+    Sharp,
+    Rounded,
+}
+
+impl CornerStyleSave {
+    fn from_logic(c: CornerStyle) -> Self {
+        match c {
+            CornerStyle::Sharp => CornerStyleSave::Sharp,
+            CornerStyle::Rounded => CornerStyleSave::Rounded,
+        }
+    }
+    fn to_logic(self) -> CornerStyle {
+        match self {
+            CornerStyleSave::Sharp => CornerStyle::Sharp,
+            CornerStyleSave::Rounded => CornerStyle::Rounded,
+        }
+    }
+}
+
+/// Serializable mirror of [`TextAlignH`].
+#[derive(Serialize, Deserialize, Clone, Copy, Default)]
+#[serde(rename_all = "snake_case")]
+enum TextAlignHSave {
+    #[default]
+    Left,
+    Center,
+    Right,
+}
+
+impl TextAlignHSave {
+    fn from_logic(a: TextAlignH) -> Self {
+        match a {
+            TextAlignH::Left => TextAlignHSave::Left,
+            TextAlignH::Center => TextAlignHSave::Center,
+            TextAlignH::Right => TextAlignHSave::Right,
+        }
+    }
+    fn to_logic(self) -> TextAlignH {
+        match self {
+            TextAlignHSave::Left => TextAlignH::Left,
+            TextAlignHSave::Center => TextAlignH::Center,
+            TextAlignHSave::Right => TextAlignH::Right,
+        }
+    }
+}
+
+/// Serializable mirror of [`TextAlignV`].
+#[derive(Serialize, Deserialize, Clone, Copy, Default)]
+#[serde(rename_all = "snake_case")]
+enum TextAlignVSave {
+    #[default]
+    Top,
+    Center,
+    Bottom,
+}
+
+impl TextAlignVSave {
+    fn from_logic(a: TextAlignV) -> Self {
+        match a {
+            TextAlignV::Top => TextAlignVSave::Top,
+            TextAlignV::Center => TextAlignVSave::Center,
+            TextAlignV::Bottom => TextAlignVSave::Bottom,
+        }
+    }
+    fn to_logic(self) -> TextAlignV {
+        match self {
+            TextAlignVSave::Top => TextAlignV::Top,
+            TextAlignVSave::Center => TextAlignV::Center,
+            TextAlignVSave::Bottom => TextAlignV::Bottom,
         }
     }
 }
@@ -117,6 +205,12 @@ pub struct NodeSave {
     label: String,
     layout_mode: LayoutModeSave,
     padding: PaddingSave,
+    #[serde(default)]
+    corner_style: CornerStyleSave,
+    #[serde(default)]
+    text_align_h: TextAlignHSave,
+    #[serde(default)]
+    text_align_v: TextAlignVSave,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -154,8 +248,11 @@ pub fn to_scene_save(nodes: &[Node], edges: &[Edge], vp: &Viewport) -> SceneSave
             width: n.rect.size.width,
             height: n.rect.size.height,
             label: n.lines.clone().join("\n"),
-            layout_mode: LayoutModeSave::from_logic(&n.layout_mode),
+            layout_mode: LayoutModeSave::from_logic(&n.props.layout_mode),
             padding: PaddingSave::from_logic(&n.padding),
+            corner_style: CornerStyleSave::from_logic(n.props.corner_style),
+            text_align_h: TextAlignHSave::from_logic(n.props.text_align_h),
+            text_align_v: TextAlignVSave::from_logic(n.props.text_align_v),
         })
         .collect();
 
@@ -189,18 +286,27 @@ pub fn from_scene_save(save: SceneSave) -> (Viewport, Vec<Node>, Vec<Edge>) {
     let nodes: Vec<Node> = save
         .nodes
         .iter()
-        .map(|n| match n.layout_mode {
-            LayoutModeSave::Manual => Node::manual_layout(
-                NodeId(n.id),
-                SRect::new(n.x, n.y, n.width, n.height),
-                n.label.clone(),
-            ),
-            LayoutModeSave::WrapContent => Node::content_layout_with_padding(
-                NodeId(n.id),
-                SPoint::new(n.x, n.y),
-                n.label.clone(),
-                PaddingSave::to_logic(n.padding),
-            ),
+        .map(|n| {
+            let mut node = match n.layout_mode {
+                LayoutModeSave::Manual => Node::manual_layout(
+                    NodeId(n.id),
+                    SRect::new(n.x, n.y, n.width, n.height),
+                    n.label.clone(),
+                ),
+                LayoutModeSave::WrapContent => Node::content_layout_with_padding(
+                    NodeId(n.id),
+                    SPoint::new(n.x, n.y),
+                    n.label.clone(),
+                    PaddingSave::to_logic(n.padding),
+                ),
+            };
+            // Restore persisted visual properties (backward-compatible via
+            // #[serde(default)] — older files get the default values).
+            node.props.layout_mode = n.layout_mode.to_logic();
+            node.props.corner_style = n.corner_style.to_logic();
+            node.props.text_align_h = n.text_align_h.to_logic();
+            node.props.text_align_v = n.text_align_v.to_logic();
+            node
         })
         .collect();
 

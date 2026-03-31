@@ -7,7 +7,7 @@
 use crossterm::event::KeyEvent;
 
 use crate::geometry::Dir;
-use crate::state::{EdgeEnd, EdgeId, NodeId, Side};
+use crate::state::{EdgeEnd, EdgeId, NodeId, NodePropChange, Side};
 
 #[derive(Clone, Debug)]
 pub enum Action {
@@ -31,10 +31,27 @@ pub enum Action {
     StartResizing,
     /// Enter inline label editing for the currently selected node.
     StartEditing,
+    /// Enter the property editing panel for the currently selected node.
+    StartPropEditing,
     /// Confirm the current action (Enter inside editing, selection match).
     Confirm,
     /// Cancel / go back one mode level (Esc).
     Cancel,
+
+    // ── Property panel navigation ─────────────────────────────────────────────
+    /// Move the property panel focus up one section.
+    PropNavUp,
+    /// Move the property panel focus down one section.
+    PropNavDown,
+    /// Move the property panel focus left within the current section (wrapping).
+    PropNavLeft,
+    /// Move the property panel focus right within the current section (wrapping).
+    PropNavRight,
+    /// Dispatch the action embedded in the currently focused property item.
+    ApplyCurrentPropItem,
+    /// Apply a targeted change to the selected node's [`crate::state::NodeProperties`].
+    /// Dispatched internally by property panel items when the user confirms.
+    SetNodeProp(NodePropChange),
 
     // ── Editing ───────────────────────────────────────────────────────────────
     /// Pass a raw key event through to the active TextArea widget.

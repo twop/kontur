@@ -1,16 +1,20 @@
+pub mod props;
+
 use crossterm::event::KeyCode;
 use ratatui::{
-    Frame,
     layout::{Alignment, Constraint, Offset, Position, Rect},
     style::{Color, Style},
     text::{Line, Span},
-    widgets::{Block, BorderType, Borders, Cell, Clear, Padding, Paragraph, Row, Table},
+    widgets::{Block, BorderType, Borders, Cell, Clear, Paragraph, Row, Table},
+    Frame,
 };
 
 use crate::geometry::{CanvasRect, SPoint, SRect};
 use crate::path::{self, PathError};
 use crate::screen_space::Screen;
-use crate::state::{BlockMode, Edge, EdgeId, EdgeMode, Mode, Node, NodeId, Side, Viewport};
+use crate::state::{
+    BlockMode, CornerStyle, Edge, EdgeId, EdgeMode, Mode, Node, NodeId, Side, TextAlignH, Viewport,
+};
 
 // ── Editing node ID helper ────────────────────────────────────────────────────
 
@@ -64,9 +68,15 @@ fn render_nodes(frame: &mut Frame, nodes: &[Node], vp: &Viewport, mode: &Mode) {
 
         frame.render_widget(Clear, area);
 
+        // Normal (unselected) border type reflects the node's corner_style property.
+        let normal_border_type = match node.props.corner_style {
+            CornerStyle::Sharp => BorderType::Plain,
+            CornerStyle::Rounded => BorderType::Rounded,
+        };
+
         // While editing: yellow double border, no title (cursor is in the textarea).
         // While selected: yellow double border with label as title.
-        // Normal: plain border with label as title.
+        // Normal: plain/rounded border based on corner_style.
         let block = if is_editing {
             Block::default()
                 .borders(borders)
@@ -77,10 +87,10 @@ fn render_nodes(frame: &mut Frame, nodes: &[Node], vp: &Viewport, mode: &Mode) {
                 .borders(borders)
                 .border_type(BorderType::Double)
                 .border_style(Style::default().fg(Color::Yellow))
-            // .title(node.lines[0].as_str())
         } else {
-            Block::default().borders(borders)
-            // .title(node.lines[0].as_str())
+            Block::default()
+                .borders(borders)
+                .border_type(normal_border_type)
         }
         .padding(node.padding.to_ratatui());
 
@@ -101,7 +111,12 @@ fn render_nodes(frame: &mut Frame, nodes: &[Node], vp: &Viewport, mode: &Mode) {
                 if content_area.width > 0 && content_area.height > 0 {
                     use ratatui::text::Text;
                     let text = Text::from_iter(node.lines.iter().map(|l| Line::from(l.as_str())));
-                    let para = Paragraph::new(text).alignment(Alignment::Left);
+                    let text_align = match node.props.text_align_h {
+                        TextAlignH::Left => Alignment::Left,
+                        TextAlignH::Center => Alignment::Center,
+                        TextAlignH::Right => Alignment::Right,
+                    };
+                    let para = Paragraph::new(text).alignment(text_align);
                     frame.render_widget(para, content_area);
                 }
             }
@@ -584,7 +599,7 @@ fn render_hints_panel(frame: &mut Frame, bindings: &[crate::binding::Binding], h
 
 // ── Generic debug panel ───────────────────────────────────────────────────────
 
-/// Render a titled, bordered panel anchored to the **top-right** corner of the
+/// Render a titled, bordered panel anchored to the **bottom-left** corner of the
 /// frame.
 ///
 /// `content` is a pre-built [`Paragraph`] (without a block attached).
@@ -600,8 +615,8 @@ fn render_debug_panel(
     let fa = frame.area();
     let panel_w = (content_w + 2).min(fa.width);
     let panel_h = (content_h + 2).min(fa.height);
-    let x = fa.width.saturating_sub(panel_w);
-    let y = 0;
+    let x = 0;
+    let y = fa.height.saturating_sub(panel_h);
     let area = Rect::new(x, y, panel_w, panel_h);
 
     let block = Block::default()
@@ -704,5 +719,8 @@ pub fn render_app(
     }
     render_hints_panel(frame, bindings, hints_header);
     render_edge_shape_panel(frame, nodes, edges, mode);
+    if let Mode::SelectedBlock(_, BlockMode::PropEditing { panel }) = mode {
+        props::render_props_panel(frame, panel);
+    }
     // render_key_log(frame, _key_log);
 }

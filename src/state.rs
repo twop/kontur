@@ -42,9 +42,71 @@ pub enum ArrowDecorations {
     Both,     // arrowheads at both ends
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum NodeLayoutMode {
+    #[default]
     Manual,
     WrapContent,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum CornerStyle {
+    #[default]
+    Sharp,
+    Rounded,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum TextAlignH {
+    #[default]
+    Left,
+    Center,
+    Right,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum TextAlignV {
+    #[default]
+    Top,
+    Center,
+    Bottom,
+}
+
+/// All visual/layout properties of a node that are editable via the properties
+/// panel.  Kept as a sub-struct so it can be passed as a unit to
+/// [`crate::prop_panel::node_prop_panel`] and mutated atomically by a
+/// [`NodePropChange`].
+#[derive(Clone, Debug, Default)]
+pub struct NodeProperties {
+    pub layout_mode: NodeLayoutMode,
+    pub corner_style: CornerStyle,
+    pub text_align_h: TextAlignH,
+    pub text_align_v: TextAlignV,
+}
+
+impl NodeProperties {
+    /// Apply a single property change in-place.
+    pub fn apply(&mut self, change: NodePropChange) {
+        match change {
+            NodePropChange::LayoutMode(m) => self.layout_mode = m,
+            NodePropChange::CornerStyle(c) => self.corner_style = c,
+            NodePropChange::TextAlignH(a) => self.text_align_h = a,
+            NodePropChange::TextAlignV(a) => self.text_align_v = a,
+        }
+    }
+}
+
+/// A single targeted mutation to a [`NodeProperties`] value.
+///
+/// Carried as the payload of [`crate::actions::Action::SetNodeProp`]; this
+/// keeps `PropItem` actions concrete while centralising all mutation logic
+/// inside `update.rs`.
+#[derive(Clone, Debug)]
+pub enum NodePropChange {
+    LayoutMode(NodeLayoutMode),
+    CornerStyle(CornerStyle),
+    TextAlignH(TextAlignH),
+    TextAlignV(TextAlignV),
 }
 
 pub type LinesVec = SmallVec<[String; 1]>;
@@ -54,7 +116,7 @@ pub struct Node {
     pub rect: SRect,
     pub lines: LinesVec,
     pub padding: Padding,
-    pub layout_mode: NodeLayoutMode,
+    pub props: NodeProperties,
 }
 
 impl Node {
@@ -65,7 +127,10 @@ impl Node {
             rect,
             lines: LinesVec::from_iter(label.into().split('\n').map(|l| l.to_string())),
             padding: Padding::default(),
-            layout_mode: NodeLayoutMode::Manual,
+            props: NodeProperties {
+                layout_mode: NodeLayoutMode::Manual,
+                ..NodeProperties::default()
+            },
         }
     }
 
@@ -112,7 +177,10 @@ impl Node {
             rect,
             lines: LinesVec::from_iter(label.split('\n').map(|l| l.to_string())),
             padding,
-            layout_mode: NodeLayoutMode::WrapContent,
+            props: NodeProperties {
+                layout_mode: NodeLayoutMode::WrapContent,
+                ..NodeProperties::default()
+            },
         }
     }
 }
@@ -175,6 +243,15 @@ pub enum BlockMode {
     ConnectingEdge {
         node_labels: Vec<(NodeId, String)>,
         current: String,
+    },
+    /// Keyboard-navigable property editor for the selected node.
+    ///
+    /// The [`crate::prop_panel::PropPanel`] holds both the panel data (sections
+    /// and items) and the current cursor position (focused section + item).
+    /// It is built from [`NodeProperties`] when entering this mode and rebuilt
+    /// in-place (preserving the cursor) after each [`NodePropChange`] is applied.
+    PropEditing {
+        panel: crate::prop_panel::PropPanel,
     },
 }
 

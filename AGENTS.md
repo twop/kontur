@@ -34,8 +34,10 @@ kontur/
     ├── state.rs
     ├── update.rs
     ├── viewport.rs
+    ├── prop_panel.rs
     └── ui/
-        └── mod.rs
+        ├── mod.rs
+        └── props.rs
 ```
 
 ---
@@ -46,13 +48,17 @@ kontur/
 
 - **src/main.rs** — Entry point: terminal setup/teardown, main event loop, and side-effect dispatch (scene save/load). Key functions: `bootstrap_small_demo_graph`, `resolve_menu`.
 
-- **src/state.rs** — Central data model; the ELM Model. Key types: `AppState`, `Node`, `Edge`, `Mode`, `BlockMode`, `EdgeMode`, `NodeId`, `EdgeId`, `GraphId`.
+- **src/state.rs** — Central data model; the ELM Model. Key types: `AppState`, `Node`, `NodeProperties`, `Edge`, `Mode`, `BlockMode`, `EdgeMode`, `NodeId`, `EdgeId`, `GraphId`, `CornerStyle`, `TextAlignH`, `TextAlignV`, `NodePropChange`.
 
 - **src/actions.rs** — All user action variants; the ELM Message type. Key type: `Action`.
 
 - **src/update.rs** — Pure state-transition function; the ELM Update. Key functions/types: `update`, `UpdateResult`, `Effect`.
 
+- **src/prop_panel.rs** — Data model and builder for the properties panel overlay. Key types/functions: `PropPanel`, `PropSection`, `PropItem`, `node_prop_panel`.
+
 - **src/ui/mod.rs** — All ratatui rendering; the ELM View. Key functions: `render_app`, `render_nodes`, `render_connections`, `render_selection_labels`, `render_hints_panel`.
+
+- **src/ui/props.rs** — Renders a `PropPanel` as a top-right-anchored bordered overlay. Key function: `render_props_panel`.
 
 - **src/binding.rs** — Declarative key→action binding system; also drives the hints panel display. Key types/functions: `Binding`, `BindingInstance`, `KeyListen`, `bindings_for_mode`.
 
