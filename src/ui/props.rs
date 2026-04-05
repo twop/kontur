@@ -1,9 +1,9 @@
 use ratatui::{
     Frame,
     layout::Rect,
-    style::{Color, Style},
+    style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, BorderType, Borders, Clear, Paragraph},
+    widgets::{Block, BorderType, Borders, Clear, Padding, Paragraph},
 };
 
 use crate::prop_panel::{PropItem, PropPanel, PropSection};
@@ -43,18 +43,68 @@ fn item_tier(
     }
 }
 
-fn item_style(tier: ItemTier) -> Style {
+struct PropStyle {
+    fg: Color,
+    bold: bool,
+    italic: bool,
+}
+
+impl PropStyle {
+    fn into_style(self) -> Style {
+        let mut modifiers = Modifier::empty();
+        if self.bold {
+            modifiers |= Modifier::BOLD;
+        }
+        if self.italic {
+            modifiers |= Modifier::ITALIC;
+        }
+        Style::default().fg(self.fg).add_modifier(modifiers)
+    }
+}
+
+fn prop_style_icon(tier: ItemTier) -> PropStyle {
     match tier {
-        ItemTier::FocusedSelected => Style::default().fg(Color::Yellow).bold(),
-        ItemTier::Focused => Style::default().fg(Color::Gray),
-        ItemTier::Selected => Style::default().fg(Color::Yellow).bold(),
-        ItemTier::Inactive => Style::default().fg(Color::Gray),
+        ItemTier::FocusedSelected | ItemTier::Selected => PropStyle {
+            fg: Color::Yellow,
+            bold: false,
+            italic: false,
+        },
+        ItemTier::Focused | ItemTier::Inactive => PropStyle {
+            fg: Color::Gray,
+            bold: false,
+            italic: false,
+        },
+    }
+}
+
+fn prop_style_text(tier: ItemTier) -> PropStyle {
+    match tier {
+        ItemTier::FocusedSelected => PropStyle {
+            fg: Color::Yellow,
+            bold: true,
+            italic: true,
+        },
+        ItemTier::Focused => PropStyle {
+            fg: Color::White,
+            bold: false,
+            italic: true,
+        },
+        ItemTier::Selected => PropStyle {
+            fg: Color::Yellow,
+            bold: true,
+            italic: false,
+        },
+        ItemTier::Inactive => PropStyle {
+            fg: Color::DarkGray,
+            bold: false,
+            italic: false,
+        },
     }
 }
 
 fn section_name_style(focused: bool) -> Style {
     if focused {
-        Style::default().fg(Color::Cyan).bold()
+        Style::default().fg(Color::Gray).italic()
     } else {
         Style::default().fg(Color::Gray)
     }
@@ -71,7 +121,7 @@ fn item_text_width(item: &PropItem) -> usize {
 
 fn section_header_line(section: &PropSection, focused: bool) -> Line<'static> {
     Line::from(vec![Span::styled(
-        format!("{}", section.name),
+        section.name,
         section_name_style(focused),
     )])
 }
@@ -88,8 +138,8 @@ fn section_item_lines(
 ) -> [Line<'static>; 2] {
     let cyan = Style::default().fg(Color::Cyan);
 
-    let mut mid_spans: Vec<Span<'static>> = vec![];
-    let mut bot_spans: Vec<Span<'static>> = vec![];
+    let mut items: Vec<Span<'static>> = vec![];
+    let mut selection_spans: Vec<Span<'static>> = vec![];
 
     for (item_idx, item) in section.items.iter().enumerate() {
         let tier = item_tier(
@@ -99,29 +149,30 @@ fn section_item_lines(
             focused_item,
             item.selected,
         );
-        let style = item_style(tier);
+        let icon_style = prop_style_icon(tier).into_style();
+        let text_style = prop_style_text(tier).into_style();
         let is_focused = section_idx == focused_section && item_idx == focused_item;
 
-        mid_spans.push(Span::styled(item.icon.to_owned(), style));
-        mid_spans.push(Span::styled(" ", style));
-        mid_spans.push(Span::styled(item.label.to_owned(), style));
+        items.push(Span::styled(item.icon.to_owned(), icon_style));
+        items.push(Span::styled(" ", text_style));
+        items.push(Span::styled(item.label.to_owned(), text_style));
 
         if is_focused {
             let dashes: String = "─".repeat(item_text_width(item));
-            bot_spans.push(Span::styled(format!("{}", dashes), cyan));
+            selection_spans.push(Span::styled(format!("{}", dashes), cyan));
         } else {
-            bot_spans.push(Span::raw(" ".repeat(item_text_width(item))));
+            selection_spans.push(Span::raw(" ".repeat(item_text_width(item))));
         }
 
         // Separator between items
         if item_idx + 1 < section.items.len() {
             let sep = "   ";
-            mid_spans.push(Span::raw(sep));
-            bot_spans.push(Span::raw(sep));
+            items.push(Span::raw(sep));
+            selection_spans.push(Span::raw(sep));
         }
     }
 
-    [Line::from(mid_spans), Line::from(bot_spans)]
+    [Line::from(items), Line::from(selection_spans)]
 }
 
 // ── Panel entry point ─────────────────────────────────────────────────────────
@@ -132,7 +183,6 @@ pub fn render_props_panel(frame: &mut Frame, panel: &PropPanel) {
         return;
     }
 
-    // Build one header line + three item lines per section.
     let mut lines: Vec<Line> = Vec::with_capacity(panel.sections.len() * 4);
     for (sec_idx, section) in panel.sections.iter().enumerate() {
         let is_focused_section = sec_idx == panel.focused_section;
@@ -143,15 +193,10 @@ pub fn render_props_panel(frame: &mut Frame, panel: &PropPanel) {
 
         lines.push(items_line);
         lines.push(selection_underline_line);
-
-        if sec_idx != panel.sections.len() - 1 {
-            // blank line between sections
-            // lines.push(Line::raw(""));
-        }
     }
 
     // Compute content dimensions.
-    let content_w = lines
+    let content_width = lines
         .iter()
         .map(|l| {
             l.spans
@@ -164,9 +209,9 @@ pub fn render_props_panel(frame: &mut Frame, panel: &PropPanel) {
     let content_h = lines.len() as u16;
 
     let fa = frame.area();
-    // +2 on each axis for the rounded border.
-    let panel_w = (content_w + 2).min(fa.width);
-    let panel_h = (content_h + 2).min(fa.height);
+    // +4 on each axis for the rounded border and padding
+    let panel_w = (content_width + 4).min(fa.width);
+    let panel_h = (content_h + 3).min(fa.height); // on the bottom there is already an empty line
 
     let x = fa.width.saturating_sub(panel_w);
     let y = 0;
@@ -174,6 +219,12 @@ pub fn render_props_panel(frame: &mut Frame, panel: &PropPanel) {
 
     let block = Block::default()
         .title(" properties ")
+        .padding(Padding {
+            left: 1,
+            right: 1,
+            top: 1,
+            bottom: 0, // on the bottom we already have a new line for reserved for selection
+        })
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(Color::DarkGray));

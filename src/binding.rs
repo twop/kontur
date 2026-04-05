@@ -313,7 +313,7 @@ pub fn bindings_for_mode(mode: &Mode) -> Vec<Binding> {
         // ── SelectedBlock / Resizing ──────────────────────────────────────────
         Mode::SelectedBlock(_, BlockMode::Resizing) => vec![
             Binding::group(
-                "Expand",
+                "expand",
                 [
                     ('h', Expand(Dir::Left), "expand left"),
                     ('l', Expand(Dir::Right), "expand right"),
@@ -365,10 +365,15 @@ pub fn bindings_for_mode(mode: &Mode) -> Vec<Binding> {
 
         // ── SelectedBlock / PropEditing ───────────────────────────────────────
         Mode::SelectedBlock(_, BlockMode::PropEditing { .. }) => vec![
-            Binding::single(('k', PropNavUp, "prev section")),
-            Binding::single(('j', PropNavDown, "next section")),
-            Binding::single(('h', PropNavLeft, "prev option")),
-            Binding::single(('l', PropNavRight, "next option")),
+            Binding::group(
+                "move focus",
+                [
+                    ('h', PropNavLeft, "prev option"),
+                    ('j', PropNavDown, "next section"),
+                    ('k', PropNavUp, "prev section"),
+                    ('l', PropNavRight, "next option"),
+                ],
+            ),
             Binding::single((KeyCode::Char(' '), ApplyCurrentPropItem, "apply")),
             Binding::single((KeyCode::Esc, Cancel, "close")),
         ],
