@@ -722,5 +722,8 @@ pub fn render_app(
     if let Mode::SelectedBlock(_, BlockMode::PropEditing { panel }) = mode {
         props::render_props_panel(frame, panel);
     }
+    if let Mode::SelectedEdge(_, EdgeMode::PropEditing { panel }) = mode {
+        props::render_props_panel(frame, panel);
+    }
     // render_key_log(frame, _key_log);
 }

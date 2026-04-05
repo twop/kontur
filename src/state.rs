@@ -37,9 +37,42 @@ pub enum Side {
 
 #[derive(Clone, Debug, PartialEq, Eq, Copy)]
 pub enum ArrowDecorations {
+    None,     // no arrowheads (plain connector)
     Forward,  // arrowhead at destination only
     Backward, // arrowhead at source only
     Both,     // arrowheads at both ends
+}
+
+impl ArrowDecorations {
+    /// True when the *start* end (from-node side) has an arrowhead.
+    pub fn has_start(self) -> bool {
+        matches!(self, Self::Backward | Self::Both)
+    }
+
+    /// True when the *end* end (to-node side) has an arrowhead.
+    pub fn has_end(self) -> bool {
+        matches!(self, Self::Forward | Self::Both)
+    }
+
+    /// Toggle the start arrowhead on or off.
+    pub fn toggle_start(self) -> Self {
+        match (self.has_start(), self.has_end()) {
+            (false, false) => Self::Backward,
+            (false, true) => Self::Both,
+            (true, false) => Self::None,
+            (true, true) => Self::Forward,
+        }
+    }
+
+    /// Toggle the end arrowhead on or off.
+    pub fn toggle_end(self) -> Self {
+        match (self.has_start(), self.has_end()) {
+            (false, false) => Self::Forward,
+            (false, true) => Self::None,
+            (true, false) => Self::Both,
+            (true, true) => Self::Backward,
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -211,8 +244,17 @@ pub enum EdgeEnd {
     To,
 }
 
+/// A single targeted mutation to an edge's [`ArrowDecorations`].
+///
+/// Carried as the payload of [`crate::actions::Action::SetEdgeProp`].
+#[derive(Clone, Debug)]
+pub enum EdgePropChange {
+    ToggleStart,
+    ToggleEnd,
+}
+
 /// Sub-mode for a selected edge.
-#[derive(Clone, PartialEq)]
+#[derive(Clone)]
 pub enum EdgeMode {
     /// Edge is selected; normal edge actions available.
     Selected,
@@ -221,6 +263,8 @@ pub enum EdgeMode {
     TweakEndpoint,
     /// Choosing which side for a specific node endpoint: h/j/k/l.
     TweakSide { node_id: NodeId },
+    /// Keyboard-navigable property editor for the selected edge.
+    PropEditing { panel: crate::prop_panel::PropPanel },
 }
 
 // ── Application mode ──────────────────────────────────────────────────────────

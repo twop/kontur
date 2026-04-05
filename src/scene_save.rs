@@ -51,6 +51,7 @@ impl SideSave {
 #[derive(Serialize, Deserialize, Clone, Copy)]
 #[serde(rename_all = "snake_case")]
 enum ArrowSave {
+    None,
     Forward,
     Backward,
     Both,
@@ -59,6 +60,7 @@ enum ArrowSave {
 impl ArrowSave {
     fn from_logic(a: ArrowDecorations) -> Self {
         match a {
+            ArrowDecorations::None => ArrowSave::None,
             ArrowDecorations::Forward => ArrowSave::Forward,
             ArrowDecorations::Backward => ArrowSave::Backward,
             ArrowDecorations::Both => ArrowSave::Both,
@@ -66,6 +68,7 @@ impl ArrowSave {
     }
     fn to_logic(self) -> ArrowDecorations {
         match self {
+            ArrowSave::None => ArrowDecorations::None,
             ArrowSave::Forward => ArrowDecorations::Forward,
             ArrowSave::Backward => ArrowDecorations::Backward,
             ArrowSave::Both => ArrowDecorations::Both,

@@ -168,12 +168,13 @@ fn side_to_dir(side: Side) -> Dir {
     }
 }
 
-/// Flip `Forward` ↔ `Backward`; `Both` is symmetric so it stays unchanged.
+/// Flip `Forward` ↔ `Backward`; `Both` and `None` are symmetric so they stay unchanged.
 fn flip_arrow(arrow: ArrowDecorations) -> ArrowDecorations {
     match arrow {
         ArrowDecorations::Forward => ArrowDecorations::Backward,
         ArrowDecorations::Backward => ArrowDecorations::Forward,
         ArrowDecorations::Both => ArrowDecorations::Both,
+        ArrowDecorations::None => ArrowDecorations::None,
     }
 }
 

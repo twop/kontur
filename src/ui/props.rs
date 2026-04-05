@@ -82,16 +82,16 @@ fn prop_style_text(tier: ItemTier) -> PropStyle {
         ItemTier::FocusedSelected => PropStyle {
             fg: Color::Yellow,
             bold: true,
-            italic: true,
+            italic: false,
         },
         ItemTier::Focused => PropStyle {
             fg: Color::White,
-            bold: false,
-            italic: true,
+            bold: true,
+            italic: false,
         },
         ItemTier::Selected => PropStyle {
             fg: Color::Yellow,
-            bold: true,
+            bold: false,
             italic: false,
         },
         ItemTier::Inactive => PropStyle {
@@ -104,7 +104,7 @@ fn prop_style_text(tier: ItemTier) -> PropStyle {
 
 fn section_name_style(focused: bool) -> Style {
     if focused {
-        Style::default().fg(Color::Gray).italic()
+        Style::default().fg(Color::Gray).bold()
     } else {
         Style::default().fg(Color::Gray)
     }

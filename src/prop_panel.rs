@@ -10,7 +10,8 @@
 
 use crate::actions::Action;
 use crate::state::{
-    CornerStyle, NodeLayoutMode, NodePropChange, NodeProperties, TextAlignH, TextAlignV,
+    ArrowDecorations, CornerStyle, EdgePropChange, NodeLayoutMode, NodePropChange, NodeProperties,
+    TextAlignH, TextAlignV,
 };
 
 // ── Nerd Font icon constants ──────────────────────────────────────────────────
@@ -221,6 +222,43 @@ pub fn node_prop_panel(props: &NodeProperties) -> PropPanel {
             ],
         },
     ];
+
+    PropPanel {
+        sections,
+        focused_section: 0,
+        focused_item: 0,
+    }
+}
+
+// ── Edge property panel builder ───────────────────────────────────────────────
+
+/// Arrow icons reused from the path renderer.
+const ICON_ARROW_START: &str = "◁"; // PathSymbol::ArrowLeft
+const ICON_ARROW_END: &str = "▷"; // PathSymbol::ArrowRight
+
+/// Build a [`PropPanel`] from the current edge [`ArrowDecorations`].
+///
+/// One section — "Arrows" — with two independently-toggleable items:
+/// start (◁) and end (▷).  The `selected` flag reflects whether each
+/// arrowhead is currently active.
+pub fn edge_prop_panel(dir: ArrowDecorations) -> PropPanel {
+    let sections = vec![PropSection {
+        name: "Arrows",
+        items: vec![
+            PropItem {
+                icon: ICON_ARROW_START,
+                label: "start",
+                selected: dir.has_start(),
+                action: Action::SetEdgeProp(EdgePropChange::ToggleStart),
+            },
+            PropItem {
+                icon: ICON_ARROW_END,
+                label: "end",
+                selected: dir.has_end(),
+                action: Action::SetEdgeProp(EdgePropChange::ToggleEnd),
+            },
+        ],
+    }];
 
     PropPanel {
         sections,

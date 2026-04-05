@@ -198,6 +198,7 @@ pub fn bindings_for_mode(mode: &Mode) -> Vec<Binding> {
         Mode::SelectedEdge(_, EdgeMode::Selected) => vec![
             Binding::single((KeyCode::Char('d'), DeleteEdge, "delete edge")),
             Binding::single((KeyCode::Char('e'), StartTweakEdge, "tweak connectors")),
+            Binding::single((KeyCode::Char('p'), StartEdgePropEditing, "properties")),
             Binding::single((KeyCode::Char('f'), StartSelecting, "jump")),
             Binding::single((KeyCode::Esc, Cancel, "deselect")),
         ],
@@ -364,7 +365,9 @@ pub fn bindings_for_mode(mode: &Mode) -> Vec<Binding> {
         ],
 
         // ── SelectedBlock / PropEditing ───────────────────────────────────────
-        Mode::SelectedBlock(_, BlockMode::PropEditing { .. }) => vec![
+        // ── SelectedEdge / PropEditing ────────────────────────────────────────
+        Mode::SelectedBlock(_, BlockMode::PropEditing { .. })
+        | Mode::SelectedEdge(_, EdgeMode::PropEditing { .. }) => vec![
             Binding::group(
                 "move focus",
                 [

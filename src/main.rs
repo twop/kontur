@@ -325,6 +325,7 @@ fn mode_name(mode: &Mode) -> &'static str {
         Mode::SelectedEdge(_, EdgeMode::Selected) => "edge",
         Mode::SelectedEdge(_, EdgeMode::TweakEndpoint) => "tweak endpoint",
         Mode::SelectedEdge(_, EdgeMode::TweakSide { .. }) => "tweak side",
+        Mode::SelectedEdge(_, EdgeMode::PropEditing { .. }) => "edge props",
         Mode::Selecting { .. } => "select",
     }
 }
