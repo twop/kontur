@@ -9,6 +9,7 @@
 // (edges, etc.) add their own builder functions without touching this file.
 
 use crate::actions::Action;
+use crate::path::PathSymbol;
 use crate::state::{
     ArrowDecorations, CornerStyle, EdgePropChange, NodeLayoutMode, NodePropChange, NodeProperties,
     TextAlignH, TextAlignV,
@@ -232,10 +233,6 @@ pub fn node_prop_panel(props: &NodeProperties) -> PropPanel {
 
 // ── Edge property panel builder ───────────────────────────────────────────────
 
-/// Arrow icons reused from the path renderer.
-const ICON_ARROW_START: &str = "◁"; // PathSymbol::ArrowLeft
-const ICON_ARROW_END: &str = "▷"; // PathSymbol::ArrowRight
-
 /// Build a [`PropPanel`] from the current edge [`ArrowDecorations`].
 ///
 /// One section — "Arrows" — with two independently-toggleable items:
@@ -246,13 +243,13 @@ pub fn edge_prop_panel(dir: ArrowDecorations) -> PropPanel {
         name: "Arrows",
         items: vec![
             PropItem {
-                icon: ICON_ARROW_START,
+                icon: PathSymbol::ArrowLeft.to_symbol(),
                 label: "start",
                 selected: dir.has_start(),
                 action: Action::SetEdgeProp(EdgePropChange::ToggleStart),
             },
             PropItem {
-                icon: ICON_ARROW_END,
+                icon: PathSymbol::ArrowRight.to_symbol(),
                 label: "end",
                 selected: dir.has_end(),
                 action: Action::SetEdgeProp(EdgePropChange::ToggleEnd),
