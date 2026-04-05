@@ -2,11 +2,11 @@ pub mod props;
 
 use crossterm::event::KeyCode;
 use ratatui::{
+    Frame,
     layout::{Alignment, Constraint, Offset, Position, Rect},
     style::{Color, Style},
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Cell, Clear, Paragraph, Row, Table},
-    Frame,
 };
 
 use crate::geometry::{CanvasRect, SPoint, SRect};
@@ -16,24 +16,15 @@ use crate::state::{
     BlockMode, CornerStyle, Edge, EdgeId, EdgeMode, Mode, Node, NodeId, Side, TextAlignH, Viewport,
 };
 
-// ── Editing node ID helper ────────────────────────────────────────────────────
-
-/// If the mode is `SelectedBlock(id, Editing { .. })`, return the node id and a
-/// reference to the textarea.  Used in `render_nodes` to decide whether to
-/// render the inline editor instead of a paragraph.
-fn editing_state(mode: &Mode) -> Option<(NodeId, &ratatui_textarea::TextArea<'static>)> {
-    if let Mode::SelectedBlock(id, BlockMode::Editing { textarea, .. }) = mode {
-        Some((*id, textarea))
-    } else {
-        None
-    }
-}
-
 // ── Node rendering ────────────────────────────────────────────────────────────
 
 fn render_nodes(frame: &mut Frame, nodes: &[Node], vp: &Viewport, mode: &Mode) {
     let frame_canvas_rect = CanvasRect::from_center(vp.animated_center(), frame.area().as_size());
-    let editing = editing_state(mode);
+    let editing = if let Mode::SelectedBlock(id, BlockMode::Editing { textarea, .. }) = mode {
+        Some((*id, textarea))
+    } else {
+        None
+    };
 
     for node in nodes {
         let node_rect = node.rect;
@@ -85,7 +76,7 @@ fn render_nodes(frame: &mut Frame, nodes: &[Node], vp: &Viewport, mode: &Mode) {
         } else if is_selected {
             Block::default()
                 .borders(borders)
-                .border_type(BorderType::Double)
+                .border_type(normal_border_type)
                 .border_style(Style::default().fg(Color::Yellow))
         } else {
             Block::default()
