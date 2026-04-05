@@ -76,14 +76,18 @@ impl PropPanel {
     /// Move focus up one section; clamp at 0; reset item cursor to 0.
     pub fn move_up(&mut self) {
         self.focused_section = self.focused_section.saturating_sub(1);
-        self.focused_item = 0;
+        self.focused_item = self
+            .focused_item
+            .min(self.current_section_len().saturating_sub(1));
     }
 
     /// Move focus down one section; clamp at last section; reset item cursor to 0.
     pub fn move_down(&mut self) {
         let max = self.sections.len().saturating_sub(1);
         self.focused_section = (self.focused_section + 1).min(max);
-        self.focused_item = 0;
+        self.focused_item = self
+            .focused_item
+            .min(self.current_section_len().saturating_sub(1));
     }
 
     /// Move focus left within the current section, wrapping around.
