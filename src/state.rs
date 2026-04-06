@@ -318,6 +318,19 @@ pub enum Mode {
     },
 }
 
+// ── Prop panel cursor coordinate ──────────────────────────────────────────────
+
+/// Remembered cursor position inside a [`crate::prop_panel::PropPanel`].
+///
+/// Stored in [`AppState`] alongside the last-used properties so that reopening
+/// the same panel type restores the cursor to where the user left it, enabling
+/// quick iterative editing without having to re-navigate every time.
+#[derive(Clone, Copy, Debug)]
+pub struct PropPanelCoord {
+    pub section: usize,
+    pub item: usize,
+}
+
 // ── Application state ─────────────────────────────────────────────────────────
 
 pub struct AppState {
@@ -326,6 +339,12 @@ pub struct AppState {
     pub edges: Vec<Edge>,
     pub vp: Viewport,
     pub mode: Mode,
+    /// Properties (and panel cursor) from the last node prop-panel session.
+    /// Applied automatically when creating new nodes.
+    pub last_node_props: Option<(PropPanelCoord, NodeProperties)>,
+    /// Properties (and panel cursor) from the last edge prop-panel session.
+    /// Applied automatically when creating new edges.
+    pub last_edge_props: Option<(PropPanelCoord, ArrowDecorations)>,
 }
 
 impl AppState {
@@ -336,6 +355,8 @@ impl AppState {
             edges: Vec::new(),
             vp,
             mode,
+            last_node_props: None,
+            last_edge_props: None,
         }
     }
 
@@ -363,6 +384,8 @@ impl AppState {
             edges,
             vp,
             mode: Mode::Normal,
+            last_node_props: None,
+            last_edge_props: None,
         }
     }
 }

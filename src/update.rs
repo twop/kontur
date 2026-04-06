@@ -301,9 +301,12 @@ pub fn update(state: &mut AppState, action: Action, canvas_size: Size) -> Update
 
         Action::CreateNewNode => {
             let id = state.new_node_id();
-            state
-                .nodes
-                .push(Node::content_layout(id, state.vp.center(), String::new()));
+            let mut node = Node::content_layout(id, state.vp.center(), String::new());
+            // Inherit last-used node properties.
+            if let Some((_, props)) = state.last_node_props.clone() {
+                node.props = props;
+            }
+            state.nodes.push(node);
 
             state.mode = Mode::SelectedBlock(id, BlockMode::Selected);
             return UpdateResult::Actions(vec![Action::StartEditing, Action::FocusSelected]);
@@ -402,13 +405,17 @@ pub fn update(state: &mut AppState, action: Action, canvas_size: Size) -> Update
                 }
             };
             let edge_id = state.new_edge_id();
+            let edge_dir = state
+                .last_edge_props
+                .map(|(_, d)| d)
+                .unwrap_or(ArrowDecorations::Forward);
             state.edges.push(Edge {
                 id: edge_id,
                 from_id,
                 from_side,
                 to_id,
                 to_side,
-                dir: ArrowDecorations::Forward,
+                dir: edge_dir,
             });
             // If we're in ConnectingEdge mode, return to Selected on the source node.
             if let Mode::SelectedBlock(src_id, BlockMode::ConnectingEdge { .. }) = state.mode {
@@ -451,6 +458,10 @@ pub fn update(state: &mut AppState, action: Action, canvas_size: Size) -> Update
 
                 if let Some((x, y)) = new_origin {
                     new_node.rect.origin = SPoint::new(x, y);
+                    // Inherit last-used node properties.
+                    if let Some((_, props)) = state.last_node_props.clone() {
+                        new_node.props = props;
+                    }
 
                     let (from_side, to_side) = match dir {
                         Dir::Right => (Side::Right, Side::Left),
@@ -460,6 +471,10 @@ pub fn update(state: &mut AppState, action: Action, canvas_size: Size) -> Update
                     };
 
                     let new_edge_id = state.new_edge_id();
+                    let edge_dir = state
+                        .last_edge_props
+                        .map(|(_, d)| d)
+                        .unwrap_or(ArrowDecorations::Forward);
                     state.nodes.push(new_node);
                     state.edges.push(Edge {
                         id: new_edge_id,
@@ -467,7 +482,7 @@ pub fn update(state: &mut AppState, action: Action, canvas_size: Size) -> Update
                         from_side,
                         to_id: new_id,
                         to_side,
-                        dir: ArrowDecorations::Forward,
+                        dir: edge_dir,
                     });
                     // Immediately enter editing mode on the new node.
                     state.mode = Mode::SelectedBlock(new_id, BlockMode::Selected);
@@ -518,8 +533,17 @@ pub fn update(state: &mut AppState, action: Action, canvas_size: Size) -> Update
         Action::StartPropEditing => {
             if let Mode::SelectedBlock(id, _) = state.mode {
                 if let Some(node) = state.nodes.iter().find(|n| n.id == id) {
-                    let panel = node_prop_panel(&node.props);
-                    state.mode = Mode::SelectedBlock(id, BlockMode::PropEditing { panel });
+                    let prev_coords = state
+                        .last_node_props
+                        .as_ref()
+                        .map(|(coords, _)| coords.clone());
+
+                    state.mode = Mode::SelectedBlock(
+                        id,
+                        BlockMode::PropEditing {
+                            panel: node_prop_panel(&node.props, prev_coords),
+                        },
+                    );
                 }
             }
         }
@@ -527,52 +551,45 @@ pub fn update(state: &mut AppState, action: Action, canvas_size: Size) -> Update
         Action::StartEdgePropEditing => {
             if let Mode::SelectedEdge(id, _) = state.mode {
                 if let Some(edge) = state.edges.iter().find(|e| e.id == id) {
-                    let panel = edge_prop_panel(edge.dir);
+                    let panel =
+                        edge_prop_panel(edge.dir, state.last_edge_props.map(|(coords, _)| coords));
                     state.mode = Mode::SelectedEdge(id, EdgeMode::PropEditing { panel });
                 }
             }
         }
 
         // ── Property panel navigation ─────────────────────────────────────────
-        Action::PropNavUp => {
-            match state.mode {
-                Mode::SelectedBlock(_, BlockMode::PropEditing { ref mut panel })
-                | Mode::SelectedEdge(_, EdgeMode::PropEditing { ref mut panel }) => {
-                    panel.move_up();
-                }
-                _ => {}
+        Action::PropNavUp => match state.mode {
+            Mode::SelectedBlock(_, BlockMode::PropEditing { ref mut panel })
+            | Mode::SelectedEdge(_, EdgeMode::PropEditing { ref mut panel }) => {
+                panel.move_up();
             }
-        }
+            _ => {}
+        },
 
-        Action::PropNavDown => {
-            match state.mode {
-                Mode::SelectedBlock(_, BlockMode::PropEditing { ref mut panel })
-                | Mode::SelectedEdge(_, EdgeMode::PropEditing { ref mut panel }) => {
-                    panel.move_down();
-                }
-                _ => {}
+        Action::PropNavDown => match state.mode {
+            Mode::SelectedBlock(_, BlockMode::PropEditing { ref mut panel })
+            | Mode::SelectedEdge(_, EdgeMode::PropEditing { ref mut panel }) => {
+                panel.move_down();
             }
-        }
+            _ => {}
+        },
 
-        Action::PropNavLeft => {
-            match state.mode {
-                Mode::SelectedBlock(_, BlockMode::PropEditing { ref mut panel })
-                | Mode::SelectedEdge(_, EdgeMode::PropEditing { ref mut panel }) => {
-                    panel.move_left();
-                }
-                _ => {}
+        Action::PropNavLeft => match state.mode {
+            Mode::SelectedBlock(_, BlockMode::PropEditing { ref mut panel })
+            | Mode::SelectedEdge(_, EdgeMode::PropEditing { ref mut panel }) => {
+                panel.move_left();
             }
-        }
+            _ => {}
+        },
 
-        Action::PropNavRight => {
-            match state.mode {
-                Mode::SelectedBlock(_, BlockMode::PropEditing { ref mut panel })
-                | Mode::SelectedEdge(_, EdgeMode::PropEditing { ref mut panel }) => {
-                    panel.move_right();
-                }
-                _ => {}
+        Action::PropNavRight => match state.mode {
+            Mode::SelectedBlock(_, BlockMode::PropEditing { ref mut panel })
+            | Mode::SelectedEdge(_, EdgeMode::PropEditing { ref mut panel }) => {
+                panel.move_right();
             }
-        }
+            _ => {}
+        },
 
         Action::ApplyCurrentPropItem => {
             let action = match state.mode {
@@ -596,18 +613,8 @@ pub fn update(state: &mut AppState, action: Action, canvas_size: Size) -> Update
                 if let Mode::SelectedBlock(id, BlockMode::PropEditing { ref mut panel }) =
                     state.mode
                 {
-                    let old_section = panel.focused_section;
-                    let old_item = panel.focused_item;
                     if let Some(node) = state.nodes.iter().find(|n| n.id == id) {
-                        let mut new_panel = node_prop_panel(&node.props);
-                        let section_max = new_panel.sections.len().saturating_sub(1);
-                        new_panel.focused_section = old_section.min(section_max);
-                        let item_max = new_panel
-                            .sections
-                            .get(new_panel.focused_section)
-                            .map(|s| s.items.len().saturating_sub(1))
-                            .unwrap_or(0);
-                        new_panel.focused_item = old_item.min(item_max);
+                        let new_panel = node_prop_panel(&node.props, Some(panel.focused));
                         *panel = new_panel;
                     }
                 }
@@ -623,21 +630,10 @@ pub fn update(state: &mut AppState, action: Action, canvas_size: Size) -> Update
                     };
                 }
                 // Rebuild panel preserving cursor position.
-                if let Mode::SelectedEdge(id, EdgeMode::PropEditing { ref mut panel }) =
-                    state.mode
+                if let Mode::SelectedEdge(id, EdgeMode::PropEditing { ref mut panel }) = state.mode
                 {
-                    let old_section = panel.focused_section;
-                    let old_item = panel.focused_item;
                     if let Some(edge) = state.edges.iter().find(|e| e.id == id) {
-                        let mut new_panel = edge_prop_panel(edge.dir);
-                        let section_max = new_panel.sections.len().saturating_sub(1);
-                        new_panel.focused_section = old_section.min(section_max);
-                        let item_max = new_panel
-                            .sections
-                            .get(new_panel.focused_section)
-                            .map(|s| s.items.len().saturating_sub(1))
-                            .unwrap_or(0);
-                        new_panel.focused_item = old_item.min(item_max);
+                        let new_panel = edge_prop_panel(edge.dir, Some(panel.focused));
                         *panel = new_panel;
                     }
                 }
@@ -653,57 +649,71 @@ pub fn update(state: &mut AppState, action: Action, canvas_size: Size) -> Update
             }
         }
 
-        Action::Cancel => match &state.mode {
-            Mode::SelectedBlock(
-                id,
-                BlockMode::Editing {
-                    original_label,
-                    original_rect,
-                    ..
-                },
-            ) => {
-                let id = *id;
-                let label = original_label.clone();
-                let rect = *original_rect;
-                if let Some(node) = state.nodes.iter_mut().find(|n| n.id == id) {
-                    node.lines = label;
-                    node.rect = rect;
+        Action::Cancel => {
+            // Each arm extracts what it needs from a read borrow of state.mode,
+            // then drops the borrow before writing back.  This two-step pattern
+            // avoids holding a shared &state reference across a mutable write.
+            match state.mode {
+                Mode::SelectedBlock(
+                    id,
+                    BlockMode::Editing {
+                        ref original_label,
+                        original_rect,
+                        ..
+                    },
+                ) => {
+                    if let Some(node) = state.nodes.iter_mut().find(|n| n.id == id) {
+                        node.lines = original_label.clone();
+                        node.rect = original_rect;
+                    }
+                    state.mode = Mode::SelectedBlock(id, BlockMode::Selected);
                 }
-                state.mode = Mode::SelectedBlock(id, BlockMode::Selected);
+                Mode::SelectedBlock(id, BlockMode::CreatingRelativeNode) => {
+                    state.mode = Mode::SelectedBlock(id, BlockMode::Selected);
+                }
+                Mode::SelectedBlock(id, BlockMode::Resizing) => {
+                    state.mode = Mode::SelectedBlock(id, BlockMode::Selected);
+                }
+                Mode::SelectedBlock(id, BlockMode::ConnectingEdge { .. }) => {
+                    state.mode = Mode::SelectedBlock(id, BlockMode::Selected);
+                }
+                Mode::SelectedBlock(id, BlockMode::PropEditing { ref panel }) => {
+                    let props = state
+                        .nodes
+                        .iter()
+                        .find(|n| n.id == id)
+                        .map(|n| n.props.clone());
+
+                    if let Some(props) = props {
+                        state.last_node_props = Some((panel.focused, props));
+                    }
+
+                    state.mode = Mode::SelectedBlock(id, BlockMode::Selected);
+                }
+                Mode::SelectedBlock(_, BlockMode::Selected) => {
+                    state.mode = Mode::Normal;
+                }
+                Mode::SelectedEdge(id, EdgeMode::PropEditing { ref panel }) => {
+                    if let Some(dir) = state.edges.iter().find(|e| e.id == id).map(|e| e.dir) {
+                        state.last_edge_props = Some((panel.focused, dir));
+                    }
+                    state.mode = Mode::SelectedEdge(id, EdgeMode::Selected);
+                }
+                Mode::SelectedEdge(id, EdgeMode::TweakSide { .. }) => {
+                    state.mode = Mode::SelectedEdge(id, EdgeMode::TweakEndpoint);
+                }
+                Mode::SelectedEdge(id, EdgeMode::TweakEndpoint) => {
+                    state.mode = Mode::SelectedEdge(id, EdgeMode::Selected);
+                }
+                Mode::SelectedEdge(_, EdgeMode::Selected) => {
+                    state.mode = Mode::Normal;
+                }
+                Mode::Selecting { ref prev, .. } => {
+                    state.mode = *prev.clone();
+                }
+                _ => (),
             }
-            Mode::SelectedBlock(id, BlockMode::CreatingRelativeNode) => {
-                state.mode = Mode::SelectedBlock(*id, BlockMode::Selected);
-            }
-            Mode::SelectedBlock(id, BlockMode::Resizing) => {
-                state.mode = Mode::SelectedBlock(*id, BlockMode::Selected);
-            }
-            Mode::SelectedBlock(id, BlockMode::ConnectingEdge { .. }) => {
-                state.mode = Mode::SelectedBlock(*id, BlockMode::Selected);
-            }
-            Mode::SelectedBlock(id, BlockMode::PropEditing { .. }) => {
-                state.mode = Mode::SelectedBlock(*id, BlockMode::Selected);
-            }
-            Mode::SelectedBlock(_, BlockMode::Selected) => {
-                state.mode = Mode::Normal;
-            }
-            Mode::SelectedEdge(id, EdgeMode::PropEditing { .. }) => {
-                state.mode = Mode::SelectedEdge(*id, EdgeMode::Selected);
-            }
-            Mode::SelectedEdge(id, EdgeMode::TweakSide { .. }) => {
-                let id = *id;
-                state.mode = Mode::SelectedEdge(id, EdgeMode::TweakEndpoint);
-            }
-            Mode::SelectedEdge(id, EdgeMode::TweakEndpoint) => {
-                state.mode = Mode::SelectedEdge(*id, EdgeMode::Selected);
-            }
-            Mode::SelectedEdge(_, EdgeMode::Selected) => {
-                state.mode = Mode::Normal;
-            }
-            Mode::Selecting { prev, .. } => {
-                state.mode = *prev.clone();
-            }
-            Mode::Normal => {}
-        },
+        }
 
         // ── Text editing ──────────────────────────────────────────────────────
         Action::TextAreaInput(key_event) => {

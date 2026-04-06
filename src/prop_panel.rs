@@ -12,7 +12,7 @@ use crate::actions::Action;
 use crate::path::PathSymbol;
 use crate::state::{
     ArrowDecorations, CornerStyle, EdgePropChange, NodeLayoutMode, NodePropChange, NodeProperties,
-    TextAlignH, TextAlignV,
+    PropPanelCoord, TextAlignH, TextAlignV,
 };
 
 // ── Nerd Font icon constants ──────────────────────────────────────────────────
@@ -64,10 +64,7 @@ pub struct PropSection {
 #[derive(Clone, Debug)]
 pub struct PropPanel {
     pub sections: Vec<PropSection>,
-    /// Index of the currently focused section (row).
-    pub focused_section: usize,
-    /// Index of the currently focused item within the focused section.
-    pub focused_item: usize,
+    pub focused: PropPanelCoord,
 }
 
 impl PropPanel {
@@ -75,19 +72,24 @@ impl PropPanel {
 
     /// Move focus up one section; clamp at 0; reset item cursor to 0.
     pub fn move_up(&mut self) {
-        self.focused_section = self.focused_section.saturating_sub(1);
-        self.focused_item = self
-            .focused_item
+        let section = self.focused.section.saturating_sub(1);
+        let item = self
+            .focused
+            .item
             .min(self.current_section_len().saturating_sub(1));
+
+        self.focused = PropPanelCoord { section, item }
     }
 
     /// Move focus down one section; clamp at last section; reset item cursor to 0.
     pub fn move_down(&mut self) {
-        let max = self.sections.len().saturating_sub(1);
-        self.focused_section = (self.focused_section + 1).min(max);
-        self.focused_item = self
-            .focused_item
+        let section = self.focused.section.saturating_add(1);
+        let item = self
+            .focused
+            .item
             .min(self.current_section_len().saturating_sub(1));
+
+        self.focused = PropPanelCoord { section, item }
     }
 
     /// Move focus left within the current section, wrapping around.
@@ -96,10 +98,10 @@ impl PropPanel {
         if n == 0 {
             return;
         }
-        self.focused_item = if self.focused_item == 0 {
+        self.focused.item = if self.focused.item == 0 {
             n - 1
         } else {
-            self.focused_item - 1
+            self.focused.item - 1
         };
     }
 
@@ -109,22 +111,37 @@ impl PropPanel {
         if n == 0 {
             return;
         }
-        self.focused_item = (self.focused_item + 1) % n;
+        self.focused.item = (self.focused.item + 1) % n;
     }
 
     /// Return the [`Action`] of the currently focused item, if the cursor is
     /// within bounds.
     pub fn current_action(&self) -> Option<Action> {
-        let section = self.sections.get(self.focused_section)?;
-        let item = section.items.get(self.focused_item)?;
+        let section = self.sections.get(self.focused.section)?;
+        let item = section.items.get(self.focused.item)?;
         Some(item.action.clone())
+    }
+
+    // ── Cursor persistence ────────────────────────────────────────────────────
+
+    /// Restore a previously saved cursor position, clamping to the panel's
+    /// current bounds so stale coords can never cause an out-of-bounds access.
+    pub fn apply_coord(self, coord: PropPanelCoord) -> Self {
+        let Self { sections, .. } = self;
+        let section = sections.len().saturating_sub(1).min(coord.section);
+        let item = sections
+            .get(section)
+            .map(|s| s.items.len().saturating_sub(1).min(coord.item))
+            .unwrap_or(0);
+        let focused = PropPanelCoord { section, item };
+        Self { sections, focused }
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     fn current_section_len(&self) -> usize {
         self.sections
-            .get(self.focused_section)
+            .get(self.focused.section)
             .map(|s| s.items.len())
             .unwrap_or(0)
     }
@@ -138,7 +155,7 @@ impl PropPanel {
 /// When a property changes, call this function again with the updated `props`
 /// and restore the previous cursor position (the caller in `update.rs` does
 /// this automatically).
-pub fn node_prop_panel(props: &NodeProperties) -> PropPanel {
+pub fn node_prop_panel(props: &NodeProperties, prev_coords: Option<PropPanelCoord>) -> PropPanel {
     let sections = vec![
         // ── Layout mode ───────────────────────────────────────────────────────
         PropSection {
@@ -228,10 +245,17 @@ pub fn node_prop_panel(props: &NodeProperties) -> PropPanel {
         },
     ];
 
-    PropPanel {
+    let panel = PropPanel {
         sections,
-        focused_section: 0,
-        focused_item: 0,
+        focused: PropPanelCoord {
+            section: 0,
+            item: 0,
+        },
+    };
+
+    match prev_coords {
+        Some(prev) => panel.apply_coord(prev),
+        None => panel,
     }
 }
 
@@ -242,7 +266,7 @@ pub fn node_prop_panel(props: &NodeProperties) -> PropPanel {
 /// One section — "Arrows" — with two independently-toggleable items:
 /// start (◁) and end (▷).  The `selected` flag reflects whether each
 /// arrowhead is currently active.
-pub fn edge_prop_panel(dir: ArrowDecorations) -> PropPanel {
+pub fn edge_prop_panel(dir: ArrowDecorations, prev_coords: Option<PropPanelCoord>) -> PropPanel {
     let sections = vec![PropSection {
         name: "Arrows",
         items: vec![
@@ -261,9 +285,16 @@ pub fn edge_prop_panel(dir: ArrowDecorations) -> PropPanel {
         ],
     }];
 
-    PropPanel {
+    let panel = PropPanel {
         sections,
-        focused_section: 0,
-        focused_item: 0,
+        focused: PropPanelCoord {
+            section: 0,
+            item: 0,
+        },
+    };
+
+    match prev_coords {
+        Some(prev) => panel.apply_coord(prev),
+        None => panel,
     }
 }

@@ -6,7 +6,10 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, Clear, Padding, Paragraph},
 };
 
-use crate::prop_panel::{PropItem, PropPanel, PropSection};
+use crate::{
+    prop_panel::{PropItem, PropPanel, PropSection},
+    state::PropPanelCoord,
+};
 
 // ── Style helpers ─────────────────────────────────────────────────────────────
 
@@ -26,11 +29,10 @@ enum ItemTier {
 fn item_tier(
     section_idx: usize,
     item_idx: usize,
-    focused_section: usize,
-    focused_item: usize,
+    focused: PropPanelCoord,
     item_selected: bool,
 ) -> ItemTier {
-    if section_idx == focused_section && item_idx == focused_item {
+    if section_idx == focused.section && item_idx == focused.item {
         if item_selected {
             ItemTier::FocusedSelected
         } else {
@@ -133,8 +135,7 @@ fn section_header_line(section: &PropSection, focused: bool) -> Line<'static> {
 fn section_item_lines(
     section: &PropSection,
     section_idx: usize,
-    focused_section: usize,
-    focused_item: usize,
+    focused: PropPanelCoord,
 ) -> [Line<'static>; 2] {
     let cyan = Style::default().fg(Color::Cyan);
 
@@ -142,16 +143,10 @@ fn section_item_lines(
     let mut selection_spans: Vec<Span<'static>> = vec![];
 
     for (item_idx, item) in section.items.iter().enumerate() {
-        let tier = item_tier(
-            section_idx,
-            item_idx,
-            focused_section,
-            focused_item,
-            item.selected,
-        );
+        let tier = item_tier(section_idx, item_idx, focused, item.selected);
         let icon_style = prop_style_icon(tier).into_style();
         let text_style = prop_style_text(tier).into_style();
-        let is_focused = section_idx == focused_section && item_idx == focused_item;
+        let is_focused = section_idx == focused.section && item_idx == focused.item;
 
         items.push(Span::styled(item.icon.to_owned(), icon_style));
         items.push(Span::styled(" ", text_style));
@@ -185,11 +180,11 @@ pub fn render_props_panel(frame: &mut Frame, panel: &PropPanel) {
 
     let mut lines: Vec<Line> = Vec::with_capacity(panel.sections.len() * 4);
     for (sec_idx, section) in panel.sections.iter().enumerate() {
-        let is_focused_section = sec_idx == panel.focused_section;
+        let is_focused_section = sec_idx == panel.focused.section;
         lines.push(section_header_line(section, is_focused_section));
 
         let [items_line, selection_underline_line] =
-            section_item_lines(section, sec_idx, panel.focused_section, panel.focused_item);
+            section_item_lines(section, sec_idx, panel.focused);
 
         lines.push(items_line);
         lines.push(selection_underline_line);
