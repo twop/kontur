@@ -2,11 +2,11 @@ pub mod props;
 
 use crossterm::event::KeyCode;
 use ratatui::{
-    Frame,
     layout::{Alignment, Constraint, Offset, Position, Rect, Size},
     style::{Color, Style},
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Cell, Clear, Paragraph, Row, Table},
+    Frame,
 };
 
 use crate::path::{self, PathError};
@@ -18,6 +18,38 @@ use crate::{
     geometry::{CanvasRect, SPoint, SRect},
     state::TextAlignV,
 };
+
+// ── Shared layout helpers ─────────────────────────────────────────────────────
+
+/// Shift `content_area` vertically according to `align_v` so that `line_count`
+/// lines of text appear at the correct vertical position within the area.
+///
+/// The returned rect has its origin moved down by the appropriate offset and its
+/// height shrunk by the same amount so that widgets rendered into it do not
+/// overflow the original `content_area`.
+fn v_aligned_content_area(content_area: Rect, line_count: u16, align_v: TextAlignV) -> Rect {
+    let wiggle_room = content_area.height.saturating_sub(line_count);
+    match align_v {
+        TextAlignV::Top => content_area,
+
+        TextAlignV::Center => content_area
+            .offset(Offset::new(0, (wiggle_room / 2) as i32))
+            .resize(Size::new(
+                content_area.as_size().width,
+                content_area
+                    .as_size()
+                    .height
+                    .saturating_sub(wiggle_room / 2),
+            )),
+
+        TextAlignV::Bottom => content_area
+            .offset(Offset::new(0, wiggle_room as i32))
+            .resize(Size::new(
+                content_area.as_size().width,
+                content_area.as_size().height.saturating_sub(wiggle_room),
+            )),
+    }
+}
 
 // ── Node rendering ────────────────────────────────────────────────────────────
 
@@ -95,11 +127,13 @@ fn render_nodes(frame: &mut Frame, nodes: &[Node], vp: &Viewport, mode: &Mode) {
             if is_editing {
                 // Render the TextArea widget inline — it owns cursor rendering.
                 if let Some((_, textarea)) = &editing {
-                    // note that the weird offset thing is for accomodating the cursor
-                    frame.render_widget(
-                        *textarea,
-                        content_area.union(content_area.offset(Offset::new(1, 0))),
-                    );
+                    let line_count = textarea.lines().len() as u16;
+                    let ta_area =
+                        v_aligned_content_area(content_area, line_count, node.props.text_align_v);
+                    // The +1 horizontal union is needed to accommodate the cursor
+                    // character at the right edge without clipping it.
+                    frame
+                        .render_widget(*textarea, ta_area.union(ta_area.offset(Offset::new(1, 0))));
                 }
             } else {
                 use ratatui::text::Text;
@@ -109,32 +143,11 @@ fn render_nodes(frame: &mut Frame, nodes: &[Node], vp: &Viewport, mode: &Mode) {
                     TextAlignH::Center => Alignment::Center,
                     TextAlignH::Right => Alignment::Right,
                 };
-
-                let wiggle_room = content_area.height.saturating_sub(text.lines.len() as u16);
-
-                let v_aligned_area = match node.props.text_align_v {
-                    TextAlignV::Top => content_area, // not changes here
-
-                    TextAlignV::Center => content_area
-                        .offset(Offset::new(0, (wiggle_room / 2) as i32))
-                        .resize(Size::new(
-                            content_area.as_size().width,
-                            content_area
-                                .as_size()
-                                .height
-                                .saturating_sub((wiggle_room / 2) as u16),
-                        )),
-
-                    TextAlignV::Bottom => content_area
-                        .offset(Offset::new(0, wiggle_room as i32))
-                        .resize(Size::new(
-                            content_area.as_size().width,
-                            content_area
-                                .as_size()
-                                .height
-                                .saturating_sub(wiggle_room as u16),
-                        )),
-                };
+                let v_aligned_area = v_aligned_content_area(
+                    content_area,
+                    text.lines.len() as u16,
+                    node.props.text_align_v,
+                );
                 let para = Paragraph::new(text).alignment(text_align);
                 frame.render_widget(para, v_aligned_area);
             }

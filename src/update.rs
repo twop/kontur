@@ -17,8 +17,8 @@ use crate::prop_panel::{edge_prop_panel, node_prop_panel};
 
 use crate::state::{
     AppState, ArrowDecorations, BlockMode, Edge, EdgeEnd, EdgeId, EdgeMode, EdgePropChange,
-    GraphId, LinesVec, Mode, Node, NodeId, NodeLayoutMode, NodePropChange, Side, Viewport,
-    create_node_rect_with_padding,
+    GraphId, LinesVec, Mode, Node, NodeId, NodeLayoutMode, NodePropChange, Side, TextAlignH,
+    Viewport, create_node_rect_with_padding,
 };
 use crate::viewport::AnimationConfig;
 
@@ -159,12 +159,15 @@ pub enum UpdateResult {
 
 // ── TextArea helpers ──────────────────────────────────────────────────────────
 
-/// Build a single-line `TextArea` pre-filled with `text`, cursor at the end.
-fn make_textarea(text: &[String]) -> TextArea<'static> {
+/// Build a `TextArea` pre-filled with `text`, cursor at the end.
+///
+/// `align_h` is applied via `TextArea::set_alignment` so horizontal text
+/// alignment in editing mode matches the node's property.
+fn make_textarea(text: &[String], align_h: ratatui::layout::Alignment) -> TextArea<'static> {
     let mut ta = TextArea::new(Vec::from(text));
     ta.set_cursor_line_style(ratatui::style::Style::default());
     ta.remove_line_number();
-    // ta.set_line_number_style(ratatui::style::Style::default());
+    ta.set_alignment(align_h);
     ta.move_cursor(CursorMove::End);
     ta
 }
@@ -520,7 +523,12 @@ pub fn update(state: &mut AppState, action: Action, canvas_size: Size) -> Update
                 if let Some(node) = state.nodes.iter().find(|n| n.id == id) {
                     let original_label = node.lines.clone();
                     let original_rect = node.rect;
-                    let textarea = make_textarea(&original_label);
+                    let align_h = match node.props.text_align_h {
+                        TextAlignH::Left => ratatui::layout::Alignment::Left,
+                        TextAlignH::Center => ratatui::layout::Alignment::Center,
+                        TextAlignH::Right => ratatui::layout::Alignment::Right,
+                    };
+                    let textarea = make_textarea(&original_label, align_h);
                     state.mode = Mode::SelectedBlock(
                         id,
                         BlockMode::Editing {
