@@ -3,17 +3,20 @@ pub mod props;
 use crossterm::event::KeyCode;
 use ratatui::{
     Frame,
-    layout::{Alignment, Constraint, Offset, Position, Rect},
+    layout::{Alignment, Constraint, Offset, Position, Rect, Size},
     style::{Color, Style},
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Cell, Clear, Paragraph, Row, Table},
 };
 
-use crate::geometry::{CanvasRect, SPoint, SRect};
 use crate::path::{self, PathError};
 use crate::screen_space::Screen;
 use crate::state::{
     BlockMode, CornerStyle, Edge, EdgeId, EdgeMode, Mode, Node, NodeId, Side, TextAlignH, Viewport,
+};
+use crate::{
+    geometry::{CanvasRect, SPoint, SRect},
+    state::TextAlignV,
 };
 
 // ── Node rendering ────────────────────────────────────────────────────────────
@@ -99,17 +102,41 @@ fn render_nodes(frame: &mut Frame, nodes: &[Node], vp: &Viewport, mode: &Mode) {
                     );
                 }
             } else {
-                if content_area.width > 0 && content_area.height > 0 {
-                    use ratatui::text::Text;
-                    let text = Text::from_iter(node.lines.iter().map(|l| Line::from(l.as_str())));
-                    let text_align = match node.props.text_align_h {
-                        TextAlignH::Left => Alignment::Left,
-                        TextAlignH::Center => Alignment::Center,
-                        TextAlignH::Right => Alignment::Right,
-                    };
-                    let para = Paragraph::new(text).alignment(text_align);
-                    frame.render_widget(para, content_area);
-                }
+                use ratatui::text::Text;
+                let text = Text::from_iter(node.lines.iter().map(|l| Line::from(l.as_str())));
+                let text_align = match node.props.text_align_h {
+                    TextAlignH::Left => Alignment::Left,
+                    TextAlignH::Center => Alignment::Center,
+                    TextAlignH::Right => Alignment::Right,
+                };
+
+                let wiggle_room = content_area.height.saturating_sub(text.lines.len() as u16);
+
+                let v_aligned_area = match node.props.text_align_v {
+                    TextAlignV::Top => content_area, // not changes here
+
+                    TextAlignV::Center => content_area
+                        .offset(Offset::new(0, (wiggle_room / 2) as i32))
+                        .resize(Size::new(
+                            content_area.as_size().width,
+                            content_area
+                                .as_size()
+                                .height
+                                .saturating_sub((wiggle_room / 2) as u16),
+                        )),
+
+                    TextAlignV::Bottom => content_area
+                        .offset(Offset::new(0, wiggle_room as i32))
+                        .resize(Size::new(
+                            content_area.as_size().width,
+                            content_area
+                                .as_size()
+                                .height
+                                .saturating_sub(wiggle_room as u16),
+                        )),
+                };
+                let para = Paragraph::new(text).alignment(text_align);
+                frame.render_widget(para, v_aligned_area);
             }
         }
     }

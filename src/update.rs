@@ -347,6 +347,7 @@ pub fn update(state: &mut AppState, action: Action, canvas_size: Size) -> Update
                         }
                         Dir::Down => node.rect.size.height += 1,
                     }
+                    node.props.layout_mode = NodeLayoutMode::Manual;
                 }
             }
         }
@@ -379,6 +380,7 @@ pub fn update(state: &mut AppState, action: Action, canvas_size: Size) -> Update
                             }
                         }
                     }
+                    node.props.layout_mode = NodeLayoutMode::Manual;
                 }
             }
         }
@@ -608,12 +610,30 @@ pub fn update(state: &mut AppState, action: Action, canvas_size: Size) -> Update
         Action::SetNodeProp(change) => {
             if let Mode::SelectedBlock(id, _) = state.mode {
                 if let Some(node) = state.nodes.iter_mut().find(|n| n.id == id) {
-                    let mut_props = &mut node.props;
                     match change {
-                        NodePropChange::LayoutMode(m) => mut_props.layout_mode = m,
-                        NodePropChange::CornerStyle(c) => mut_props.corner_style = c,
-                        NodePropChange::TextAlignH(a) => mut_props.text_align_h = a,
-                        NodePropChange::TextAlignV(a) => mut_props.text_align_v = a,
+                        NodePropChange::LayoutMode(m) => {
+                            let prev_mode = node.props.layout_mode;
+                            node.props.layout_mode = m;
+                            if m == NodeLayoutMode::WrapContent
+                                && prev_mode != NodeLayoutMode::WrapContent
+                            {
+                                let max_chars = node
+                                    .lines
+                                    .iter()
+                                    .map(|l| l.chars().count())
+                                    .max()
+                                    .unwrap_or(0) as u16;
+                                let line_count = node.lines.len() as u16;
+                                node.rect = create_node_rect_with_padding(
+                                    node.rect.origin,
+                                    node.padding,
+                                    (max_chars, line_count),
+                                );
+                            }
+                        }
+                        NodePropChange::CornerStyle(c) => node.props.corner_style = c,
+                        NodePropChange::TextAlignH(a) => node.props.text_align_h = a,
+                        NodePropChange::TextAlignV(a) => node.props.text_align_v = a,
                     };
                 }
 
