@@ -17,7 +17,8 @@ use crate::prop_panel::{edge_prop_panel, node_prop_panel};
 
 use crate::state::{
     AppState, ArrowDecorations, BlockMode, Edge, EdgeEnd, EdgeId, EdgeMode, EdgePropChange,
-    GraphId, LinesVec, Mode, Node, NodeId, Side, Viewport, create_node_rect_with_padding,
+    GraphId, LinesVec, Mode, Node, NodeId, NodeLayoutMode, NodePropChange, Side, Viewport,
+    create_node_rect_with_padding,
 };
 use crate::viewport::AnimationConfig;
 
@@ -607,8 +608,15 @@ pub fn update(state: &mut AppState, action: Action, canvas_size: Size) -> Update
         Action::SetNodeProp(change) => {
             if let Mode::SelectedBlock(id, _) = state.mode {
                 if let Some(node) = state.nodes.iter_mut().find(|n| n.id == id) {
-                    node.props.apply(change);
+                    let mut_props = &mut node.props;
+                    match change {
+                        NodePropChange::LayoutMode(m) => mut_props.layout_mode = m,
+                        NodePropChange::CornerStyle(c) => mut_props.corner_style = c,
+                        NodePropChange::TextAlignH(a) => mut_props.text_align_h = a,
+                        NodePropChange::TextAlignV(a) => mut_props.text_align_v = a,
+                    };
                 }
+
                 // Rebuild panel preserving cursor position.
                 if let Mode::SelectedBlock(id, BlockMode::PropEditing { ref mut panel }) =
                     state.mode
@@ -726,8 +734,6 @@ pub fn update(state: &mut AppState, action: Action, canvas_size: Size) -> Update
                 && let Some(ref mut node) = state.nodes.iter_mut().find(|n| n.id == id)
             {
                 textarea.input(key_event_to_input(key_event));
-                let padding = node.padding;
-
                 let max_chars = textarea
                     .lines()
                     .iter()
@@ -736,11 +742,22 @@ pub fn update(state: &mut AppState, action: Action, canvas_size: Size) -> Update
                     .unwrap_or(0) as u16;
                 let line_count = textarea.lines().len() as u16;
 
-                node.rect = create_node_rect_with_padding(
+                let desired_wrapped_rect = create_node_rect_with_padding(
                     node.rect.origin,
-                    padding,
-                    Size::new(max_chars.max(1), line_count.max(1)),
+                    node.padding,
+                    (max_chars, line_count),
                 );
+
+                match node.props.layout_mode {
+                    NodeLayoutMode::Manual => {
+                        // that basically means that we expand the rect if we exceed size
+                        node.rect = node.rect.extend_to(desired_wrapped_rect.bottom_right());
+                    }
+
+                    NodeLayoutMode::WrapContent => {
+                        node.rect = desired_wrapped_rect;
+                    }
+                }
             }
         }
 

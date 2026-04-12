@@ -117,18 +117,6 @@ pub struct NodeProperties {
     pub text_align_v: TextAlignV,
 }
 
-impl NodeProperties {
-    /// Apply a single property change in-place.
-    pub fn apply(&mut self, change: NodePropChange) {
-        match change {
-            NodePropChange::LayoutMode(m) => self.layout_mode = m,
-            NodePropChange::CornerStyle(c) => self.corner_style = c,
-            NodePropChange::TextAlignH(a) => self.text_align_h = a,
-            NodePropChange::TextAlignV(a) => self.text_align_v = a,
-        }
-    }
-}
-
 /// A single targeted mutation to a [`NodeProperties`] value.
 ///
 /// Carried as the payload of [`crate::actions::Action::SetNodeProp`]; this
@@ -218,7 +206,14 @@ impl Node {
     }
 }
 
-pub fn create_node_rect_with_padding(origin: SPoint, padding: Padding, size: Size) -> SRect {
+pub fn create_node_rect_with_padding(
+    origin: SPoint,
+    padding: Padding,
+    size: impl Into<Size>,
+) -> SRect {
+    let size = size.into();
+    let size = Size::new(size.width.max(1), size.height.max(1));
+
     // border takes 1 on each side, hence "+2"
     let width = size.width + padding.left as u16 + padding.right as u16 + 2;
     let height = size.height + padding.top as u16 + padding.bottom as u16 + 2;
