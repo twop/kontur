@@ -110,6 +110,15 @@ pub enum Action {
     /// Set the side for the chosen endpoint.
     SetEdgeSide(Side),
 
+    // ── Selection ─────────────────────────────────────────────────────────────
+    /// Select all nodes (transitions to MultiSelected with every node id).
+    SelectAll,
+
+    // ── Export ────────────────────────────────────────────────────────────────
+    /// Render the current multi-selection to a plain unicode string and copy it
+    /// to the system clipboard.  Only effective in `MultiSelected` mode.
+    YankSelection,
+
     // ── Application ───────────────────────────────────────────────────────────
     Quit,
 

@@ -171,6 +171,8 @@ pub enum Effect {
     SaveScene,
     /// Deserialize `scene.kontur` and replace the current scene.
     LoadScene,
+    /// Copy the given string to the system clipboard.
+    CopyToClipboard(String),
 }
 
 #[derive(Debug, Clone)]
@@ -312,6 +314,31 @@ fn compute_sides(src: &Node, dst: &Node) -> (Side, Side) {
 /// and `FocusSelected` (viewport centering).
 pub fn update(state: &mut AppState, action: Action, canvas_size: Size) -> UpdateResult {
     match action {
+        // ── Selection: select all ─────────────────────────────────────────────
+        Action::SelectAll => {
+            let ids: SmallVec<[NodeId; 4]> = state.nodes.iter().map(|n| n.id).collect();
+            if ids.is_empty() {
+                state.mode = Mode::Normal;
+            } else {
+                state.mode = Mode::MultiSelected { ids };
+            }
+        }
+
+        // ── Export: yank selection to clipboard ───────────────────────────────
+        Action::YankSelection => {
+            if let Mode::MultiSelected { ref ids } = state.mode {
+                let text = crate::ui::text_export::render_selection_to_string(
+                    &state.nodes,
+                    &state.edges,
+                    ids,
+                    &crate::ui::text_export::ExportOptions::default(),
+                );
+                if let Some(text) = text {
+                    return UpdateResult::Effect(Effect::CopyToClipboard(text));
+                }
+            }
+        }
+
         // ── Application ───────────────────────────────────────────────────────
         Action::Quit => return UpdateResult::Quit,
 

@@ -132,6 +132,7 @@ pub enum NodePropChange {
 
 pub type LinesVec = SmallVec<[String; 1]>;
 
+#[derive(Clone, Debug)]
 pub struct Node {
     pub id: NodeId,
     pub rect: SRect,
@@ -221,6 +222,7 @@ pub fn create_node_rect_with_padding(
     rect
 }
 
+#[derive(Clone, Debug)]
 pub struct Edge {
     pub id: EdgeId,
     pub from_id: NodeId,

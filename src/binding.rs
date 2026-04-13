@@ -199,13 +199,27 @@ impl Binding {
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
-/// Items shared by every space-leader menu (Normal and SelectedBlock).
-fn space_menu_items() -> impl IntoIterator<Item = Binding> {
-    [
+/// Items shared by every space-leader menu (Normal, SelectedBlock, MultiSelected).
+fn space_menu_items() -> Vec<Binding> {
+    vec![
         Binding::single((KeyCode::Char('q'), Action::Quit, "quit")),
         Binding::single((KeyCode::Char('s'), Action::SaveScene, "save scene")),
         Binding::single((KeyCode::Char('l'), Action::LoadScene, "load scene")),
+        Binding::single((KeyCode::Char('a'), Action::SelectAll, "select all")),
     ]
+}
+
+/// Space-leader menu items for `MultiSelected` mode.
+///
+/// Extends the shared items with `y` (yank / copy selection to clipboard).
+fn multi_selected_menu_items() -> Vec<Binding> {
+    let mut items = space_menu_items();
+    items.push(Binding::single((
+        KeyCode::Char('y'),
+        Action::YankSelection,
+        "yank (copy)",
+    )));
+    items
 }
 
 /// Return the bindings that are currently active given the application `mode`
@@ -460,7 +474,8 @@ pub fn bindings_for_mode(mode: &Mode) -> Vec<Binding> {
             ),
             Binding::single(('s', StartMultiSelecting, "add/remove nodes")),
             Binding::single((KeyCode::Esc, Cancel, "clear selection")),
-            Binding::menu(KeyCode::Char(' '), "menu", space_menu_items()),
+            // Space menu for MultiSelected: shared items + yank (y).
+            Binding::menu(KeyCode::Char(' '), "menu", multi_selected_menu_items()),
         ],
     };
 

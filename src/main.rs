@@ -270,6 +270,11 @@ fn main() -> color_eyre::Result<()> {
                                         }
                                     }
                                 }
+                                update::Effect::CopyToClipboard(text) => {
+                                    if let Ok(mut clipboard) = arboard::Clipboard::new() {
+                                        let _ = clipboard.set_text(text);
+                                    }
+                                }
                             },
                         }
                     }

@@ -1,4 +1,5 @@
 pub mod props;
+pub mod text_export;
 
 use crossterm::event::KeyCode;
 use ratatui::{
@@ -54,7 +55,7 @@ fn v_aligned_content_area(content_area: Rect, line_count: u16, align_v: TextAlig
 
 // ── Node rendering ────────────────────────────────────────────────────────────
 
-fn render_nodes(frame: &mut Frame, nodes: &[Node], vp: &Viewport, mode: &Mode) {
+pub(crate) fn render_nodes(frame: &mut Frame, nodes: &[Node], vp: &Viewport, mode: &Mode) {
     let frame_canvas_rect = CanvasRect::from_center(vp.animated_center(), frame.area().as_size());
     let editing = if let Mode::SelectedBlock(id, BlockMode::Editing { textarea, .. }) = mode {
         Some((*id, textarea))
@@ -169,7 +170,7 @@ fn render_nodes(frame: &mut Frame, nodes: &[Node], vp: &Viewport, mode: &Mode) {
 ///
 /// The selected edge (if any is identified by `mode`) is rendered in yellow to
 /// match the selection colour used for nodes.
-fn render_connections(
+pub(crate) fn render_connections(
     frame: &mut Frame,
     nodes: &[Node],
     edges: &[Edge],
