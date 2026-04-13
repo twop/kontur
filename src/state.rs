@@ -311,6 +311,27 @@ pub enum Mode {
         current: String,
         prev: Box<Mode>,
     },
+    /// Additive node-multi-select label overlay.
+    ///
+    /// Shows jump labels on every visible node. Typing a label toggles that
+    /// node in/out of `selected`. Stays in this mode after each toggle so the
+    /// user can keep adding/removing nodes without re-triggering.
+    ///
+    /// `Esc` → `MultiSelected { ids: selected }` if non-empty, else `Normal`.
+    MultiSelecting {
+        node_labels: Vec<(NodeId, String)>,
+        current: String,
+        /// Nodes toggled into the selection so far.
+        selected: SmallVec<[NodeId; 4]>,
+    },
+    /// Two or more nodes selected simultaneously.
+    ///
+    /// `h/j/k/l` moves all selected nodes as a rigid group.
+    /// `s` re-enters `MultiSelecting` with these ids pre-filled.
+    /// `Esc` → `Normal`.
+    MultiSelected {
+        ids: SmallVec<[NodeId; 4]>,
+    },
 }
 
 // ── Prop panel cursor coordinate ──────────────────────────────────────────────

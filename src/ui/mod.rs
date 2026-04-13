@@ -18,6 +18,7 @@ use crate::{
     geometry::{CanvasRect, SPoint, SRect},
     state::TextAlignV,
 };
+use smallvec::SmallVec;
 
 // ── Shared layout helpers ─────────────────────────────────────────────────────
 
@@ -89,6 +90,11 @@ fn render_nodes(frame: &mut Frame, nodes: &[Node], vp: &Viewport, mode: &Mode) {
 
         let is_selected = matches!(mode, Mode::SelectedBlock(id, _) if *id == node.id);
         let is_editing = editing.as_ref().is_some_and(|(id, _)| *id == node.id);
+        let is_multi_selected = match mode {
+            Mode::MultiSelected { ids } => ids.contains(&node.id),
+            Mode::MultiSelecting { selected, .. } => selected.contains(&node.id),
+            _ => false,
+        };
 
         let area = Screen::to_ratatui_rect(Screen::rect(vp, clipped), frame_canvas_rect.size);
 
@@ -100,15 +106,16 @@ fn render_nodes(frame: &mut Frame, nodes: &[Node], vp: &Viewport, mode: &Mode) {
             CornerStyle::Rounded => BorderType::Rounded,
         };
 
-        // While editing: yellow double border, no title (cursor is in the textarea).
-        // While selected: yellow double border with label as title.
-        // Normal: plain/rounded border based on corner_style.
+        // While editing:       yellow double border.
+        // While selected:      yellow border (single-select).
+        // While multi-selected: yellow border (consistent with single-select).
+        // Normal:              plain/rounded border per corner_style, default colour.
         let block = if is_editing {
             Block::default()
                 .borders(borders)
                 .border_type(BorderType::Double)
                 .border_style(Style::default().fg(Color::Yellow))
-        } else if is_selected {
+        } else if is_selected || is_multi_selected {
             Block::default()
                 .borders(borders)
                 .border_type(normal_border_type)
@@ -384,6 +391,75 @@ fn render_connect_labels(
             current,
             Screen::to_ratatui_point(Screen::point(vp, node.rect.center()), viewport_rect.size),
         );
+    }
+}
+
+// ── Multi-select label overlay ────────────────────────────────────────────────
+
+/// Render jump labels for the multi-select overlay (`Mode::MultiSelecting`).
+///
+/// All visible nodes receive a label.  Nodes already in `selected` are rendered
+/// with a **green** background to signal that they are currently in the
+/// selection set; all others use the standard **cyan** background.
+fn render_multi_select_labels(
+    frame: &mut Frame,
+    nodes: &[Node],
+    vp: &Viewport,
+    node_labels: &[(NodeId, String)],
+    current: &str,
+    selected: &SmallVec<[NodeId; 4]>,
+) {
+    use ratatui::style::Modifier;
+
+    let viewport_rect = CanvasRect::from_center(vp.animated_center(), frame.area().as_size());
+
+    for (id, label) in node_labels {
+        if !label.starts_with(current) {
+            continue;
+        }
+
+        let node = match nodes.iter().find(|n| n.id == *id) {
+            Some(n) if viewport_rect.contains(n.rect.center()) => n,
+            _ => continue,
+        };
+
+        let pos =
+            Screen::to_ratatui_point(Screen::point(vp, node.rect.center()), viewport_rect.size);
+
+        let Position { x, y } = pos;
+        if x >= frame.area().width || y >= frame.area().height {
+            continue;
+        }
+
+        let matched_len = current.len();
+        let matched = &label[..matched_len];
+        let rest = &label[matched_len..];
+
+        let matched_style = Style::default().fg(Color::DarkGray);
+        // Already-selected nodes: green background; others: cyan background.
+        let bg = if selected.contains(id) {
+            Color::Green
+        } else {
+            Color::Cyan
+        };
+        let hint_style = Style::default()
+            .fg(Color::Black)
+            .bg(bg)
+            .add_modifier(Modifier::BOLD);
+
+        let label_w = label.chars().count() as u16;
+        let available_w = frame.area().width.saturating_sub(x);
+        let render_w = label_w.min(available_w);
+        if render_w == 0 {
+            continue;
+        }
+
+        let spans = vec![
+            Span::styled(matched, matched_style),
+            Span::styled(rest, hint_style),
+        ];
+        let area = Rect::new(x, y, render_w, 1);
+        frame.render_widget(Paragraph::new(Line::from(spans)), area);
     }
 }
 
@@ -741,6 +817,14 @@ pub fn render_app(
     ) = mode
     {
         render_connect_labels(frame, nodes, vp, *source_id, node_labels, current);
+    }
+    if let Mode::MultiSelecting {
+        node_labels,
+        current,
+        selected,
+    } = mode
+    {
+        render_multi_select_labels(frame, nodes, vp, node_labels, current, selected);
     }
     if let Mode::SelectedEdge(edge_id, EdgeMode::TweakEndpoint) = mode {
         render_tweak_endpoint_labels(frame, nodes, edges, vp, *edge_id);

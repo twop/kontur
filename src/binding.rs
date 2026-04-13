@@ -274,6 +274,7 @@ pub fn bindings_for_mode(mode: &Mode) -> Vec<Binding> {
                 .map(|(key, dir)| (KeyCode::Char(key), KeyModifiers::SHIFT, Pan(dir, 10), "pan")),
             ),
             Binding::single(('f', StartSelecting, "jump")),
+            Binding::single(('s', StartMultiSelecting, "multi-select")),
             Binding::single(('c', CreateNewNode, "create block")),
             // ── Space leader menu ─────────────────────────────────────────────
             Binding::menu(KeyCode::Char(' '), "menu", space_menu_items()),
@@ -315,6 +316,7 @@ pub fn bindings_for_mode(mode: &Mode) -> Vec<Binding> {
             Binding::single(('d', DeleteShape, "delete")),
             Binding::single(('c', StartCreatingRelativeNode, "new relative node")),
             Binding::single(('f', StartSelecting, "jump")),
+            Binding::single(('s', StartMultiSelecting, "multi-select")),
             Binding::single((KeyCode::Esc, Cancel, "deselect")),
             Binding::menu(KeyCode::Char(' '), "menu", space_menu_items()),
         ],
@@ -416,6 +418,49 @@ pub fn bindings_for_mode(mode: &Mode) -> Vec<Binding> {
                 KeyCode::Char(ch) => Some(SelectChar(ch)),
                 _ => None,
             }),
+        ],
+
+        // ── MultiSelecting (additive node-pick overlay) ───────────────────────
+        Mode::MultiSelecting { .. } => vec![
+            Binding::single((KeyCode::Esc, Cancel, "done")),
+            Binding::listen("type label to toggle", |ev| match ev.code {
+                KeyCode::Char(ch) => Some(SelectChar(ch)),
+                _ => None,
+            }),
+        ],
+
+        // ── MultiSelected (group of nodes selected) ───────────────────────────
+        Mode::MultiSelected { .. } => vec![
+            Binding::group(
+                "move",
+                [
+                    ('h', Dir::Left),
+                    ('l', Dir::Right),
+                    ('k', Dir::Up),
+                    ('j', Dir::Down),
+                ]
+                .map(|(key, dir)| (KeyCode::Char(key), Move(dir, 1), "move")),
+            ),
+            Binding::group(
+                "move fast",
+                [
+                    ('H', Dir::Left),
+                    ('L', Dir::Right),
+                    ('J', Dir::Down),
+                    ('K', Dir::Up),
+                ]
+                .map(|(key, dir)| {
+                    (
+                        KeyCode::Char(key),
+                        KeyModifiers::SHIFT,
+                        Move(dir, 5),
+                        "move fast",
+                    )
+                }),
+            ),
+            Binding::single(('s', StartMultiSelecting, "add/remove nodes")),
+            Binding::single((KeyCode::Esc, Cancel, "clear selection")),
+            Binding::menu(KeyCode::Char(' '), "menu", space_menu_items()),
         ],
     };
 

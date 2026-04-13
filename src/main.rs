@@ -328,5 +328,7 @@ fn mode_name(mode: &Mode) -> &'static str {
         Mode::SelectedEdge(_, EdgeMode::TweakSide { .. }) => "tweak side",
         Mode::SelectedEdge(_, EdgeMode::PropEditing { .. }) => "edge props",
         Mode::Selecting { .. } => "select",
+        Mode::MultiSelecting { .. } => "multi-select",
+        Mode::MultiSelected { .. } => "multi-selected",
     }
 }

@@ -15,6 +15,8 @@ use crate::labels::LabelIter;
 use crate::path;
 use crate::prop_panel::{edge_prop_panel, node_prop_panel};
 
+use smallvec::SmallVec;
+
 use crate::state::{
     AppState, ArrowDecorations, BlockMode, Edge, EdgeEnd, EdgeId, EdgeMode, EdgePropChange,
     GraphId, LinesVec, Mode, Node, NodeId, NodeLayoutMode, NodePropChange, Side, TextAlignH,
@@ -121,6 +123,32 @@ fn assign_node_labels(
     let mut items: Vec<(i32, NodeId)> = nodes
         .iter()
         .filter(|n| n.id != exclude_id)
+        .filter(|n| viewport_rect.contains(n.rect.center()))
+        .map(|n| (chebyshev(n.rect.center(), center), n.id))
+        .collect();
+
+    items.sort_by_key(|(d, _)| *d);
+
+    LabelIter::new(SINGLE_CHARS, DOUBLE_CHARS)
+        .zip(items)
+        .map(|(label, (_, id))| (id, label))
+        .collect()
+}
+
+/// Assign jump labels to **all** visible nodes (no exclusion).
+///
+/// Used by `MultiSelecting` to show target labels for every node on screen,
+/// including those already in the selection set.
+fn assign_all_node_labels(
+    nodes: &[Node],
+    vp: &Viewport,
+    canvas_size: Size,
+) -> Vec<(NodeId, String)> {
+    let center = vp.center();
+    let viewport_rect = CanvasRect::from_center(center, canvas_size);
+
+    let mut items: Vec<(i32, NodeId)> = nodes
+        .iter()
         .filter(|n| viewport_rect.contains(n.rect.center()))
         .map(|n| (chebyshev(n.rect.center(), center), n.id))
         .collect();
@@ -332,6 +360,19 @@ pub fn update(state: &mut AppState, action: Action, canvas_size: Size) -> Update
                 // check, so this is a no-op when the node is well-centred.
                 return UpdateResult::Actions(vec![Action::FocusSelected]);
             }
+            // Move all nodes in a multi-selection as a rigid group.
+            if let Mode::MultiSelected { ref ids } = state.mode {
+                for id in ids {
+                    if let Some(node) = state.nodes.iter_mut().find(|n| n.id == *id) {
+                        match dir {
+                            Dir::Left => node.rect.origin.x -= amount as i32,
+                            Dir::Right => node.rect.origin.x += amount as i32,
+                            Dir::Up => node.rect.origin.y -= amount as i32,
+                            Dir::Down => node.rect.origin.y += amount as i32,
+                        }
+                    }
+                }
+            }
         }
 
         // ── Resize: expand ────────────────────────────────────────────────────
@@ -512,6 +553,21 @@ pub fn update(state: &mut AppState, action: Action, canvas_size: Size) -> Update
             };
         }
 
+        Action::StartMultiSelecting => {
+            // Seed the selection from the current mode.
+            let selected: SmallVec<[NodeId; 4]> = match &state.mode {
+                Mode::SelectedBlock(id, _) => smallvec::smallvec![*id],
+                Mode::MultiSelected { ids } => ids.clone(),
+                _ => SmallVec::new(),
+            };
+            let node_labels = assign_all_node_labels(&state.nodes, &state.vp, canvas_size);
+            state.mode = Mode::MultiSelecting {
+                node_labels,
+                current: String::new(),
+                selected,
+            };
+        }
+
         Action::StartResizing => {
             if let Mode::SelectedBlock(id, _) = state.mode {
                 state.mode = Mode::SelectedBlock(id, BlockMode::Resizing);
@@ -625,12 +681,12 @@ pub fn update(state: &mut AppState, action: Action, canvas_size: Size) -> Update
                             if m == NodeLayoutMode::WrapContent
                                 && prev_mode != NodeLayoutMode::WrapContent
                             {
-                                let max_chars = node
-                                    .lines
-                                    .iter()
-                                    .map(|l| l.chars().count())
-                                    .max()
-                                    .unwrap_or(0) as u16;
+                                let max_chars =
+                                    node.lines
+                                        .iter()
+                                        .map(|l| l.chars().count())
+                                        .max()
+                                        .unwrap_or(0) as u16;
                                 let line_count = node.lines.len() as u16;
                                 node.rect = create_node_rect_with_padding(
                                     node.rect.origin,
@@ -746,6 +802,19 @@ pub fn update(state: &mut AppState, action: Action, canvas_size: Size) -> Update
                 }
                 Mode::Selecting { ref prev, .. } => {
                     state.mode = *prev.clone();
+                }
+                // Esc from multi-selecting: commit selection if non-empty, else Normal.
+                Mode::MultiSelecting { ref selected, .. } => {
+                    if selected.is_empty() {
+                        state.mode = Mode::Normal;
+                    } else {
+                        let ids = selected.clone();
+                        state.mode = Mode::MultiSelected { ids };
+                    }
+                }
+                // Esc from multi-selected: back to Normal.
+                Mode::MultiSelected { .. } => {
+                    state.mode = Mode::Normal;
                 }
                 _ => (),
             }
@@ -929,6 +998,38 @@ pub fn update(state: &mut AppState, action: Action, canvas_size: Size) -> Update
                     .any(|(_, label)| label.starts_with(current_str.as_str()));
                 if !any_partial {
                     state.mode = Mode::SelectedBlock(src_id, BlockMode::Selected);
+                }
+            }
+            // ── Multi-select label overlay ─────────────────────────────────────
+            Mode::MultiSelecting {
+                ref node_labels,
+                ref mut current,
+                ref mut selected,
+            } => {
+                current.push(ch);
+                let current_str = current.clone();
+
+                if let Some((matched_id, _)) =
+                    node_labels.iter().find(|(_, label)| *label == current_str)
+                {
+                    let matched_id = *matched_id;
+                    // Toggle: remove if already selected, add if not.
+                    if let Some(pos) = selected.iter().position(|id| *id == matched_id) {
+                        selected.remove(pos);
+                    } else {
+                        selected.push(matched_id);
+                    }
+                    // Reset the typed prefix; stay in MultiSelecting.
+                    current.clear();
+                    return UpdateResult::Continue;
+                }
+
+                // Dead sequence — clear prefix and keep waiting.
+                let any_partial = node_labels
+                    .iter()
+                    .any(|(_, label)| label.starts_with(current_str.as_str()));
+                if !any_partial {
+                    current.clear();
                 }
             }
             _ => (),

@@ -65,6 +65,10 @@ pub enum Action {
     // ── Selection / jump ──────────────────────────────────────────────────────
     /// A printable character was typed while in Selecting mode.
     SelectChar(char),
+    /// Enter the additive multi-select label overlay.
+    /// Seeds the selection from the current mode:
+    /// `Normal` → empty, `SelectedBlock(id)` → `[id]`, `MultiSelected` → existing ids.
+    StartMultiSelecting,
 
     // ── Creating New Blocks──────────────────────────────────────────────────────
     CreateNewNode,
