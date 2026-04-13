@@ -192,14 +192,15 @@ fn main() -> color_eyre::Result<()> {
                 };
 
                 // Walk bindings in order; the first match wins.
-                let mut action = None;
+                let mut matched_actions: Option<smallvec::SmallVec<[crate::actions::Action; 1]>> =
+                    None;
                 let mut clear_menu = true;
 
                 for b in bindings.iter() {
                     match b {
                         Binding::Single(inst) => {
                             if inst.key.matches(key.code, key.modifiers) {
-                                action = Some(inst.action.clone());
+                                matched_actions = Some(inst.actions.clone());
                                 break;
                             }
                         }
@@ -210,7 +211,7 @@ fn main() -> color_eyre::Result<()> {
                                 .iter()
                                 .find(|inst| inst.key.matches(key.code, key.modifiers))
                             {
-                                action = Some(inst.action.clone());
+                                matched_actions = Some(inst.actions.clone());
                                 break;
                             }
                         }
@@ -228,7 +229,7 @@ fn main() -> color_eyre::Result<()> {
                         }
                         Binding::Listen(listener) => {
                             if let Some(a) = (listener.handler)(key) {
-                                action = Some(a);
+                                matched_actions = Some(smallvec::smallvec![a]);
                                 break;
                             }
                         }
@@ -239,9 +240,9 @@ fn main() -> color_eyre::Result<()> {
                     menu_keys_sequence = None;
                 }
 
-                if let Some(a) = action {
+                if let Some(actions) = matched_actions {
                     let mut quit = false;
-                    let mut queue = VecDeque::from([a]);
+                    let mut queue = VecDeque::from_iter(actions);
                     while let Some(next) = queue.pop_front() {
                         match update(&mut app, next, canvas_size) {
                             UpdateResult::Quit => {

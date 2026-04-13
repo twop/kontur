@@ -4,6 +4,7 @@
 // mode.  Used to render contextual hints and to document available shortcuts.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use smallvec::{smallvec, SmallVec};
 
 use crate::actions::Action;
 use crate::state::{BlockMode, EdgeEnd, EdgeMode, Mode, Side};
@@ -39,12 +40,16 @@ impl KeyBinding {
 
 // ── A single key → action pairing ────────────────────────────────────────────
 
-/// One concrete binding: a key chord mapped to an application action, with a
-/// human-readable description used for hints and documentation.
+/// One concrete binding: a key chord mapped to one or more application actions,
+/// with a human-readable description used for hints and documentation.
+///
+/// `actions` is a `SmallVec<[Action; 1]>` so the common single-action case
+/// never heap-allocates; multi-action bindings (e.g. apply + close) spill to
+/// the heap only when needed.
 #[derive(Clone, Debug)]
 pub struct BindingInstance {
     pub key: KeyBinding,
-    pub action: Action,
+    pub actions: SmallVec<[Action; 1]>,
     pub description: &'static str,
 }
 
@@ -59,7 +64,7 @@ impl BindingInstance {
         };
         Self {
             key: KeyBinding::with_mods(key, modifiers),
-            action,
+            actions: smallvec![action],
             description,
         }
     }
@@ -72,7 +77,25 @@ impl BindingInstance {
     ) -> Self {
         Self {
             key: KeyBinding::with_mods(key, modifiers),
-            action,
+            actions: smallvec![action],
+            description,
+        }
+    }
+
+    /// Construct a binding that dispatches multiple actions in sequence when
+    /// the key is pressed.  Actions are applied left-to-right.
+    pub fn multi(
+        key: KeyCode,
+        actions: impl IntoIterator<Item = Action>,
+        description: &'static str,
+    ) -> Self {
+        let modifiers = match key {
+            KeyCode::Char(c) if c.is_uppercase() => KeyModifiers::SHIFT,
+            _ => KeyModifiers::NONE,
+        };
+        Self {
+            key: KeyBinding::with_mods(key, modifiers),
+            actions: actions.into_iter().collect(),
             description,
         }
     }
@@ -378,6 +401,11 @@ pub fn bindings_for_mode(mode: &Mode) -> Vec<Binding> {
                 ],
             ),
             Binding::single((KeyCode::Char(' '), ApplyCurrentPropItem, "apply")),
+            Binding::Single(BindingInstance::multi(
+                KeyCode::Enter,
+                [ApplyCurrentPropItem, Cancel],
+                "apply and close",
+            )),
             Binding::single((KeyCode::Esc, Cancel, "close")),
         ],
 
