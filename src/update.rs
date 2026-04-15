@@ -5,6 +5,8 @@
 //
 // Returns `UpdateResult` so the caller knows whether to keep running.
 
+use std::path::PathBuf;
+
 use crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::layout::Size;
 use ratatui_textarea::{CursorMove, Input, Key, TextArea};
@@ -167,12 +169,36 @@ fn assign_all_node_labels(
 /// I/O).  The caller in `main.rs` is responsible for executing them.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Effect {
-    /// Serialize the current scene to `scene.kontur`.
-    SaveScene,
+    /// Serialize the current scene to the given path.
+    SaveSceneTo(PathBuf),
     /// Deserialize `scene.kontur` and replace the current scene.
     LoadScene,
     /// Copy the given string to the system clipboard.
     CopyToClipboard(String),
+}
+
+// ── Path resolution ───────────────────────────────────────────────────────────
+
+/// Resolve a raw filename string typed by the user into a concrete `PathBuf`.
+///
+/// Rules:
+/// - Leading/trailing whitespace is stripped.
+/// - A trailing `.ktr` extension is stripped before re-appending, so the user
+///   can type either `foo` or `foo.ktr` without getting `foo.ktr.ktr`.
+/// - Relative paths are resolved against the process current working directory.
+/// - Absolute paths are used as-is.
+pub(crate) fn resolve_save_path(input: &str) -> PathBuf {
+    let trimmed = input.trim();
+    let stem = trimmed.strip_suffix(".ktr").unwrap_or(trimmed);
+    let filename = format!("{}.ktr", stem);
+    let p = PathBuf::from(&filename);
+    if p.is_absolute() {
+        p
+    } else {
+        std::env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("."))
+            .join(p)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -198,6 +224,17 @@ fn make_textarea(text: &[String], align_h: ratatui::layout::Alignment) -> TextAr
     ta.set_cursor_line_style(ratatui::style::Style::default());
     ta.remove_line_number();
     ta.set_alignment(align_h);
+    ta.move_cursor(CursorMove::End);
+    ta
+}
+
+/// Build a single-line `TextArea` for the save-file modal, optionally
+/// pre-filled with `prefill` (the stem of the current working file).
+fn make_save_modal_textarea(prefill: &str) -> TextArea<'static> {
+    let mut ta = TextArea::new(vec![prefill.to_string()]);
+    ta.set_cursor_line_style(ratatui::style::Style::default());
+    ta.remove_line_number();
+    ta.set_alignment(ratatui::layout::Alignment::Left);
     ta.move_cursor(CursorMove::End);
     ta
 }
@@ -343,7 +380,51 @@ pub fn update(state: &mut AppState, action: Action, canvas_size: Size) -> Update
         Action::Quit => return UpdateResult::Quit,
 
         // ── Scene persistence ─────────────────────────────────────────────────
-        Action::SaveScene => return UpdateResult::Effect(Effect::SaveScene),
+        Action::OpenSaveModal => {
+            if let Some(ref path) = state.working_file {
+                // Working file already known: quick-save without opening modal.
+                return UpdateResult::Effect(Effect::SaveSceneTo(path.clone()));
+            }
+            // No working file yet: open the modal with an empty input.
+            let textarea = make_save_modal_textarea("");
+            let prev = Box::new(state.mode.clone());
+            state.mode = Mode::SaveModal { textarea, prev };
+        }
+
+        Action::OpenSaveAsModal => {
+            // Always open the modal; pre-fill from working_file stem if set.
+            let prefill = state
+                .working_file
+                .as_deref()
+                .and_then(|p| p.file_stem())
+                .and_then(|s| s.to_str())
+                .unwrap_or("");
+            let textarea = make_save_modal_textarea(prefill);
+            let prev = Box::new(state.mode.clone());
+            state.mode = Mode::SaveModal { textarea, prev };
+        }
+
+        Action::SaveModalConfirm => {
+            if let Mode::SaveModal { ref textarea, ref prev } = state.mode {
+                let input = textarea.lines().first().map(|s| s.as_str()).unwrap_or("");
+                let path = resolve_save_path(input);
+                let prev_mode = *prev.clone();
+                state.mode = prev_mode;
+                return UpdateResult::Effect(Effect::SaveSceneTo(path));
+            }
+        }
+
+        Action::SaveModalCancel => {
+            if let Mode::SaveModal { ref prev, .. } = state.mode {
+                let prev_mode = *prev.clone();
+                state.mode = prev_mode;
+            }
+        }
+
+        Action::SaveSceneTo(path) => {
+            return UpdateResult::Effect(Effect::SaveSceneTo(path));
+        }
+
         Action::LoadScene => return UpdateResult::Effect(Effect::LoadScene),
 
         // ── Viewport panning (Normal mode) ────────────────────────────────────
@@ -849,6 +930,16 @@ pub fn update(state: &mut AppState, action: Action, canvas_size: Size) -> Update
 
         // ── Text editing ──────────────────────────────────────────────────────
         Action::TextAreaInput(key_event) => {
+            // ── Save modal filename input ─────────────────────────────────────
+            if let Mode::SaveModal {
+                ref mut textarea, ..
+            } = state.mode
+            {
+                textarea.input(key_event_to_input(key_event));
+                return UpdateResult::Continue;
+            }
+
+            // ── Node label editing ────────────────────────────────────────────
             if let Mode::SelectedBlock(
                 id,
                 BlockMode::Editing {

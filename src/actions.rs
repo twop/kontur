@@ -4,6 +4,8 @@
 // represented here.  The update loop translates raw key events into one of
 // these variants and then applies the resulting state change.
 
+use std::path::PathBuf;
+
 use crossterm::event::KeyEvent;
 
 use crate::geometry::Dir;
@@ -123,8 +125,21 @@ pub enum Action {
     Quit,
 
     // ── Scene persistence ─────────────────────────────────────────────────────
-    /// Serialize the current scene to `scene.kontur`.
-    SaveScene,
+    /// Open the save-file modal.
+    ///
+    /// If `working_file` is already set on `AppState`, performs a quick save
+    /// directly to that path without opening the modal.
+    OpenSaveModal,
+    /// Always open the save-file modal, pre-filling the input from
+    /// `AppState::working_file` when it is set (Save As).
+    OpenSaveAsModal,
+    /// Confirm the filename typed in the save modal and write the file.
+    SaveModalConfirm,
+    /// Cancel the save modal and restore the previous mode without saving.
+    SaveModalCancel,
+    /// Internal: serialize the current scene to the given path.
+    /// Produced by `SaveModalConfirm` and the quick-save path of `OpenSaveModal`.
+    SaveSceneTo(PathBuf),
     /// Deserialize `scene.kontur` and replace the current scene.
     LoadScene,
 }

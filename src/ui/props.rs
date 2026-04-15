@@ -1,9 +1,9 @@
 use ratatui::{
-    Frame,
     layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Clear, Padding, Paragraph},
+    Frame,
 };
 
 use crate::{
@@ -88,12 +88,12 @@ fn prop_style_text(tier: ItemTier) -> PropStyle {
         },
         ItemTier::Focused => PropStyle {
             fg: Color::White,
-            bold: true,
+            bold: false,
             italic: false,
         },
         ItemTier::Selected => PropStyle {
             fg: Color::Yellow,
-            bold: false,
+            bold: true,
             italic: false,
         },
         ItemTier::Inactive => PropStyle {

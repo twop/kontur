@@ -1,9 +1,13 @@
 pub mod props;
+pub mod save_modal;
+pub mod status_bar;
 pub mod text_export;
+
+use std::path::Path;
 
 use crossterm::event::KeyCode;
 use ratatui::{
-    layout::{Alignment, Constraint, Offset, Position, Rect, Size},
+    layout::{Alignment, Constraint, Layout, Offset, Position, Rect, Size},
     style::{Color, Style},
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Cell, Clear, Paragraph, Row, Table},
@@ -794,8 +798,16 @@ pub fn render_app(
     bindings: &[crate::binding::Binding],
     hints_header: &str,
     _key_log: &[String],
+    working_file: Option<&Path>,
+    is_dirty: bool,
+    cwd: &Path,
 ) {
     let fa = frame.area();
+
+    // Reserve 1 row at the bottom for the status bar.
+    let [canvas_area, status_area] =
+        Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).areas(fa);
+
     frame.render_widget(ratatui::widgets::Clear, fa);
     let path_errors = render_connections(frame, nodes, edges, vp, mode);
     render_nodes(frame, nodes, vp, mode);
@@ -840,6 +852,10 @@ pub fn render_app(
     }
     if let Mode::SelectedEdge(_, EdgeMode::PropEditing { panel }) = mode {
         props::render_props_panel(frame, panel);
+    }
+    status_bar::render_status_bar(frame, status_area, working_file, is_dirty);
+    if let Mode::SaveModal { textarea, .. } = mode {
+        save_modal::render_save_modal(frame, canvas_area, textarea, working_file, cwd);
     }
     // render_key_log(frame, _key_log);
 }

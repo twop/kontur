@@ -12,6 +12,7 @@ pub mod update;
 pub mod viewport;
 
 use std::collections::VecDeque;
+use std::path::PathBuf;
 use std::time::Instant;
 
 use crossterm::event::{KeyCode, KeyModifiers};
@@ -22,6 +23,39 @@ use update::{UpdateResult, update};
 use viewport::Viewport;
 
 use crate::binding::{Binding, KeyBinding, bindings_for_mode};
+
+// ── Save state ────────────────────────────────────────────────────────────────
+
+/// Tracks whether the in-memory scene matches the last file written to disk.
+///
+/// `iteration` is incremented after every `update()` call.
+/// `last_saved_iteration` is set to `iteration` after a successful write or
+/// load.  The scene is dirty when the two values differ.
+struct SaveState {
+    iteration: u64,
+    last_saved_iteration: u64,
+}
+
+impl SaveState {
+    fn new() -> Self {
+        Self {
+            iteration: 0,
+            last_saved_iteration: 0,
+        }
+    }
+
+    fn is_dirty(&self) -> bool {
+        self.iteration != self.last_saved_iteration
+    }
+
+    fn mark_saved(&mut self) {
+        self.last_saved_iteration = self.iteration;
+    }
+
+    fn tick(&mut self) {
+        self.iteration += 1;
+    }
+}
 
 fn format_key(code: KeyCode, mods: KeyModifiers) -> String {
     let key = match code {
@@ -143,8 +177,11 @@ fn main() -> color_eyre::Result<()> {
         app.mode = Mode::SelectedBlock(first.id, BlockMode::Selected);
     }
 
+    let cwd = std::env::current_dir().unwrap_or_default();
+
     let mut last_tick = Instant::now();
     let mut menu_keys_sequence: Option<Vec<KeyBinding>> = None;
+    let mut save_state = SaveState::new();
 
     loop {
         let now = Instant::now();
@@ -163,6 +200,7 @@ fn main() -> color_eyre::Result<()> {
             (mode_bindings.as_slice(), mode_name(&app.mode))
         };
 
+        let is_dirty = save_state.is_dirty();
         terminal.draw(|frame| {
             ui::render_app(
                 frame,
@@ -173,6 +211,9 @@ fn main() -> color_eyre::Result<()> {
                 &bindings,
                 hints_header,
                 &key_log,
+                app.working_file.as_deref(),
+                is_dirty,
+                &cwd,
             );
         })?;
 
@@ -244,6 +285,7 @@ fn main() -> color_eyre::Result<()> {
                     let mut quit = false;
                     let mut queue = VecDeque::from_iter(actions);
                     while let Some(next) = queue.pop_front() {
+                        save_state.tick();
                         match update(&mut app, next, canvas_size) {
                             UpdateResult::Quit => {
                                 quit = true;
@@ -252,11 +294,18 @@ fn main() -> color_eyre::Result<()> {
                             UpdateResult::Continue => {}
                             UpdateResult::Actions(follow_up) => queue.extend(follow_up),
                             UpdateResult::Effect(effect) => match effect {
-                                update::Effect::SaveScene => {
+                                update::Effect::SaveSceneTo(ref path) => {
                                     let snapshot =
                                         scene_save::to_scene_save(&app.nodes, &app.edges, &app.vp);
                                     if let Ok(json) = serde_json::to_string_pretty(&snapshot) {
-                                        let _ = std::fs::write("scene.kontur", json);
+                                        // Create parent directories if needed.
+                                        if let Some(parent) = path.parent() {
+                                            let _ = std::fs::create_dir_all(parent);
+                                        }
+                                        if std::fs::write(path, json).is_ok() {
+                                            app.working_file = Some(path.clone());
+                                            save_state.mark_saved();
+                                        }
                                     }
                                 }
                                 update::Effect::LoadScene => {
@@ -267,6 +316,9 @@ fn main() -> color_eyre::Result<()> {
                                             let (vp, nodes, edges) =
                                                 scene_save::from_scene_save(snapshot);
                                             app = AppState::from_parts(nodes, edges, vp);
+                                            app.working_file =
+                                                Some(PathBuf::from("scene.kontur"));
+                                            save_state.mark_saved();
                                         }
                                     }
                                 }
@@ -322,6 +374,7 @@ fn mode_name(mode: &Mode) -> &'static str {
     use state::{BlockMode, EdgeMode};
     match mode {
         Mode::Normal => "normal",
+        Mode::SaveModal { .. } => "save",
         Mode::SelectedBlock(_, BlockMode::Selected) => "block",
         Mode::SelectedBlock(_, BlockMode::CreatingRelativeNode) => "new node",
         Mode::SelectedBlock(_, BlockMode::Resizing) => "resize",

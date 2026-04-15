@@ -1,5 +1,7 @@
 // ── Types ────────────────────────────────────────────────────────────────────
 
+use std::path::PathBuf;
+
 use ratatui::{layout::Size, widgets::StatefulWidget};
 use smallvec::SmallVec;
 
@@ -299,6 +301,14 @@ pub enum BlockMode {
 #[derive(Clone)]
 pub enum Mode {
     Normal,
+    /// Single-line filename input for saving the scene.
+    ///
+    /// `textarea` holds the filename stem the user is typing.
+    /// `prev` is the mode to restore on Cancel (Esc).
+    SaveModal {
+        textarea: ratatui_textarea::TextArea<'static>,
+        prev: Box<Mode>,
+    },
     SelectedBlock(NodeId, BlockMode),
     SelectedEdge(EdgeId, EdgeMode),
     /// Jump-to-node/edge selection mode (inspired by vimium/hop.nvim).
@@ -357,6 +367,9 @@ pub struct AppState {
     pub edges: Vec<Edge>,
     pub vp: Viewport,
     pub mode: Mode,
+    /// The file path most recently saved to / loaded from.  `None` means the
+    /// scene has never been persisted.  Not serialized — managed by `main.rs`.
+    pub working_file: Option<PathBuf>,
     /// Properties (and panel cursor) from the last node prop-panel session.
     /// Applied automatically when creating new nodes.
     pub last_node_props: Option<(PropPanelCoord, NodeProperties)>,
@@ -373,6 +386,7 @@ impl AppState {
             edges: Vec::new(),
             vp,
             mode,
+            working_file: None,
             last_node_props: None,
             last_edge_props: None,
         }
@@ -402,6 +416,7 @@ impl AppState {
             edges,
             vp,
             mode: Mode::Normal,
+            working_file: None,
             last_node_props: None,
             last_edge_props: None,
         }

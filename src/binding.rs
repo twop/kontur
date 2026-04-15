@@ -203,7 +203,8 @@ impl Binding {
 fn space_menu_items() -> Vec<Binding> {
     vec![
         Binding::single((KeyCode::Char('q'), Action::Quit, "quit")),
-        Binding::single((KeyCode::Char('s'), Action::SaveScene, "save scene")),
+        Binding::single((KeyCode::Char('s'), Action::OpenSaveModal, "save")),
+        Binding::single((KeyCode::Char('S'), Action::OpenSaveAsModal, "save as")),
         Binding::single((KeyCode::Char('l'), Action::LoadScene, "load scene")),
         Binding::single((KeyCode::Char('a'), Action::SelectAll, "select all")),
     ]
@@ -440,6 +441,19 @@ pub fn bindings_for_mode(mode: &Mode) -> Vec<Binding> {
             Binding::listen("type label to toggle", |ev| match ev.code {
                 KeyCode::Char(ch) => Some(SelectChar(ch)),
                 _ => None,
+            }),
+        ],
+
+        // ── SaveModal (filename input for save-file dialog) ───────────────────
+        Mode::SaveModal { .. } => vec![
+            // Enter and Esc are named bindings that take priority over the
+            // catch-all Listen below (first match wins in the event loop).
+            Binding::single((KeyCode::Enter, Action::SaveModalConfirm, "save")),
+            Binding::single((KeyCode::Esc, Action::SaveModalCancel, "cancel")),
+            // Forward every other key verbatim to the TextArea widget.
+            Binding::listen("type filename", |ev| match ev.code {
+                KeyCode::Enter | KeyCode::Esc => None,
+                _ => Some(Action::TextAreaInput(ev)),
             }),
         ],
 
