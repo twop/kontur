@@ -2,10 +2,9 @@
 
 use std::path::PathBuf;
 
-use ratatui::{layout::Size, widgets::StatefulWidget};
+use ratatui::layout::Size;
 use smallvec::SmallVec;
 
-use crate::actions::CopyFormat;
 use crate::geometry::{Padding, SPoint, SRect};
 pub use crate::viewport::{AnimationConfig, Viewport};
 

@@ -1,6 +1,5 @@
 use std::marker::PhantomData;
 
-use color_eyre::owo_colors::colors::xterm::OrientBlue;
 use ratatui::layout::{Rect, Size};
 
 /// Padding (in cells) added on each side between a node's label and its border
