@@ -207,18 +207,19 @@ fn space_menu_items() -> Vec<Binding> {
         Binding::single((KeyCode::Char('S'), Action::OpenSaveAsModal, "save as")),
         Binding::single((KeyCode::Char('l'), Action::LoadScene, "load scene")),
         Binding::single((KeyCode::Char('a'), Action::SelectAll, "select all")),
+        Binding::single((KeyCode::Char('y'), Action::StartCopyAs, "copy as")),
     ]
 }
 
 /// Space-leader menu items for `MultiSelected` mode.
 ///
-/// Extends the shared items with `y` (yank / copy selection to clipboard).
+/// Extends the shared items with `Y` (yank / plain copy of the current selection).
 fn multi_selected_menu_items() -> Vec<Binding> {
     let mut items = space_menu_items();
     items.push(Binding::single((
-        KeyCode::Char('y'),
+        KeyCode::Char('Y'),
         Action::YankSelection,
-        "yank (copy)",
+        "yank selection (plain)",
     )));
     items
 }
@@ -406,8 +407,10 @@ pub fn bindings_for_mode(mode: &Mode) -> Vec<Binding> {
 
         // ── SelectedBlock / PropEditing ───────────────────────────────────────
         // ── SelectedEdge / PropEditing ────────────────────────────────────────
+        // ── CopyAsModal ───────────────────────────────────────────────────────
         Mode::SelectedBlock(_, BlockMode::PropEditing { .. })
-        | Mode::SelectedEdge(_, EdgeMode::PropEditing { .. }) => vec![
+        | Mode::SelectedEdge(_, EdgeMode::PropEditing { .. })
+        | Mode::CopyAsModal { .. } => vec![
             Binding::group(
                 "move focus",
                 [

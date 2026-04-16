@@ -11,6 +11,21 @@ use crossterm::event::KeyEvent;
 use crate::geometry::Dir;
 use crate::state::{EdgeEnd, EdgeId, EdgePropChange, NodeId, NodePropChange, Side};
 
+// ── Copy-as format ────────────────────────────────────────────────────────────
+
+/// The output format used when copying the whole scene via `CopyAs`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CopyFormat {
+    /// Plain unicode art — no wrapper, no breadcrumb.
+    Plain,
+    /// Wrapped in a fenced Markdown code block.
+    Markdown,
+    /// Wrapped in a Python triple-quoted string.
+    Python,
+    /// Every line prefixed with `// ` (Rust line comments).
+    Rust,
+}
+
 #[derive(Clone, Debug)]
 pub enum Action {
     // ── Viewport panning (Normal mode) ────────────────────────────────────────
@@ -120,6 +135,12 @@ pub enum Action {
     /// Render the current multi-selection to a plain unicode string and copy it
     /// to the system clipboard.  Only effective in `MultiSelected` mode.
     YankSelection,
+    /// Open the "copy as" format-picker modal.  Operates on the whole scene
+    /// (all nodes) regardless of the current selection state.
+    StartCopyAs,
+    /// Perform the actual copy-to-clipboard with the given format wrapper.
+    /// Dispatched internally by the focused item in the `CopyAsModal` panel.
+    CopyAs(CopyFormat),
 
     // ── Application ───────────────────────────────────────────────────────────
     Quit,

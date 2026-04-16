@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use ratatui::{layout::Size, widgets::StatefulWidget};
 use smallvec::SmallVec;
 
+use crate::actions::CopyFormat;
 use crate::geometry::{Padding, SPoint, SRect};
 pub use crate::viewport::{AnimationConfig, Viewport};
 
@@ -309,6 +310,14 @@ pub enum Mode {
         textarea: ratatui_textarea::TextArea<'static>,
         prev: Box<Mode>,
     },
+    /// Format-picker modal for copying the whole scene as formatted text.
+    ///
+    /// `panel` drives the option-selection UI (reuses [`crate::prop_panel::PropPanel`]).
+    /// `prev` is the mode to restore on Cancel (Esc) or after a successful copy.
+    CopyAsModal {
+        panel: crate::prop_panel::PropPanel,
+        prev: Box<Mode>,
+    },
     SelectedBlock(NodeId, BlockMode),
     SelectedEdge(EdgeId, EdgeMode),
     /// Jump-to-node/edge selection mode (inspired by vimium/hop.nvim).
@@ -376,6 +385,10 @@ pub struct AppState {
     /// Properties (and panel cursor) from the last edge prop-panel session.
     /// Applied automatically when creating new edges.
     pub last_edge_props: Option<(PropPanelCoord, ArrowDecorations)>,
+    /// Format (and panel cursor) from the last "copy as" session.
+    /// Restored when the modal is re-opened so the cursor remembers the last
+    /// format the user picked.
+    pub last_copy_as: Option<PropPanelCoord>,
 }
 
 impl AppState {
@@ -389,6 +402,7 @@ impl AppState {
             working_file: None,
             last_node_props: None,
             last_edge_props: None,
+            last_copy_as: None,
         }
     }
 
@@ -419,6 +433,7 @@ impl AppState {
             working_file: None,
             last_node_props: None,
             last_edge_props: None,
+            last_copy_as: None,
         }
     }
 }

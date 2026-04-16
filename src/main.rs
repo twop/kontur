@@ -388,5 +388,6 @@ fn mode_name(mode: &Mode) -> &'static str {
         Mode::Selecting { .. } => "select",
         Mode::MultiSelecting { .. } => "multi-select",
         Mode::MultiSelected { .. } => "multi-selected",
+        Mode::CopyAsModal { .. } => "copy as",
     }
 }

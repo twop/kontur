@@ -48,17 +48,17 @@ kontur/
 
 - **src/main.rs** — Entry point: terminal setup/teardown, main event loop, and side-effect dispatch (scene save/load). Key functions: `bootstrap_small_demo_graph`, `resolve_menu`.
 
-- **src/state.rs** — Central data model; the ELM Model. Key types: `AppState`, `Node`, `NodeProperties`, `Edge`, `Mode`, `BlockMode`, `EdgeMode`, `NodeId`, `EdgeId`, `GraphId`, `CornerStyle`, `TextAlignH`, `TextAlignV`, `NodePropChange`.
+- **src/state.rs** — Central data model; the ELM Model. Key types: `AppState`, `Node`, `NodeProperties`, `Edge`, `Mode` (incl. `CopyAsModal`), `BlockMode`, `EdgeMode`, `NodeId`, `EdgeId`, `GraphId`, `CornerStyle`, `TextAlignH`, `TextAlignV`, `NodePropChange`, `PropPanelCoord`.
 
-- **src/actions.rs** — All user action variants; the ELM Message type. Key type: `Action`.
+- **src/actions.rs** — All user action variants; the ELM Message type. Key types: `Action`, `CopyFormat`.
 
-- **src/update.rs** — Pure state-transition function; the ELM Update. Key functions/types: `update`, `UpdateResult`, `Effect`.
+- **src/update.rs** — Pure state-transition function; the ELM Update. Key functions/types: `update`, `UpdateResult`, `Effect`, `wrap_for_format`.
 
-- **src/prop_panel.rs** — Data model and builder for the properties panel overlay. Key types/functions: `PropPanel`, `PropSection`, `PropItem`, `node_prop_panel`.
+- **src/prop_panel.rs** — Data model and builders for the properties panel and copy-as picker. Key types/functions: `PropPanel`, `PropSection`, `PropItem`, `node_prop_panel`, `edge_prop_panel`, `copy_as_panel`.
 
 - **src/ui/mod.rs** — All ratatui rendering; the ELM View. Key functions: `render_app`, `render_nodes`, `render_connections`, `render_selection_labels`, `render_hints_panel`.
 
-- **src/ui/props.rs** — Renders a `PropPanel` as a top-right-anchored bordered overlay. Key function: `render_props_panel`.
+- **src/ui/props.rs** — Renders a `PropPanel` as a top-right overlay or a centred option-selection modal. Key functions: `render_props_panel`, `render_option_selection_modal`.
 
 - **src/binding.rs** — Declarative key→action binding system; also drives the hints panel display. Key types/functions: `Binding`, `BindingInstance`, `KeyListen`, `bindings_for_mode`.
 

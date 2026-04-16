@@ -8,7 +8,7 @@
 // For nodes the panel is built by `node_prop_panel`.  Future element types
 // (edges, etc.) add their own builder functions without touching this file.
 
-use crate::actions::Action;
+use crate::actions::{Action, CopyFormat};
 use crate::path::PathSymbol;
 use crate::state::{
     ArrowDecorations, CornerStyle, EdgePropChange, NodeLayoutMode, NodePropChange, NodeProperties,
@@ -53,8 +53,8 @@ pub struct PropItem {
 /// A named horizontal group of [`PropItem`]s.
 #[derive(Clone, Debug)]
 pub struct PropSection {
-    /// Section title, e.g. `"layout"`.
-    pub name: &'static str,
+    /// optional section title, e.g. `"layout"`.
+    pub name: Option<&'static str>,
     /// The items in this section, displayed left-to-right.
     pub items: Vec<PropItem>,
 }
@@ -159,7 +159,7 @@ pub fn node_prop_panel(props: &NodeProperties, prev_coords: Option<PropPanelCoor
     let sections = vec![
         // ── Layout mode ───────────────────────────────────────────────────────
         PropSection {
-            name: "Layout",
+            name: Some("Layout"),
             items: vec![
                 PropItem {
                     icon: ICON_MANUAL,
@@ -179,7 +179,7 @@ pub fn node_prop_panel(props: &NodeProperties, prev_coords: Option<PropPanelCoor
         },
         // ── Corner style ──────────────────────────────────────────────────────
         PropSection {
-            name: "Corners",
+            name: Some("Corners"),
             items: vec![
                 PropItem {
                     icon: ICON_ROUNDED,
@@ -197,7 +197,7 @@ pub fn node_prop_panel(props: &NodeProperties, prev_coords: Option<PropPanelCoor
         },
         // ── Horizontal text alignment ─────────────────────────────────────────
         PropSection {
-            name: "Align horizontally",
+            name: Some("Align horizontally"),
             items: vec![
                 PropItem {
                     icon: ICON_ALIGN_LEFT,
@@ -221,7 +221,7 @@ pub fn node_prop_panel(props: &NodeProperties, prev_coords: Option<PropPanelCoor
         },
         // ── Vertical text alignment ───────────────────────────────────────────
         PropSection {
-            name: "Align vertically",
+            name: Some("Align vertically"),
             items: vec![
                 PropItem {
                     icon: ICON_ALIGN_TOP,
@@ -259,6 +259,57 @@ pub fn node_prop_panel(props: &NodeProperties, prev_coords: Option<PropPanelCoor
     }
 }
 
+// ── Copy-as format panel builder ──────────────────────────────────────────────
+
+/// Build a [`PropPanel`] for the "copy as" format picker.
+///
+/// One section — "Copy as" — with four items: plain, markdown, python, rust.
+/// The `selected` flag on the matching item reflects `last_format` so the
+/// previously chosen format is visually highlighted when the modal re-opens.
+pub fn copy_as_panel(prev_coords: Option<PropPanelCoord>) -> PropPanel {
+    let sections = vec![PropSection {
+        name: None,
+        items: vec![
+            PropItem {
+                icon: "",
+                label: "plain",
+                selected: false,
+                action: Action::CopyAs(CopyFormat::Plain),
+            },
+            PropItem {
+                icon: "",
+                label: "markdown",
+                selected: false,
+                action: Action::CopyAs(CopyFormat::Markdown),
+            },
+            PropItem {
+                icon: "",
+                label: "python",
+                selected: false,
+                action: Action::CopyAs(CopyFormat::Python),
+            },
+            PropItem {
+                icon: "", //
+                label: "rust",
+                selected: false,
+                action: Action::CopyAs(CopyFormat::Rust),
+            },
+        ],
+    }];
+
+    let panel = PropPanel {
+        sections,
+        focused: PropPanelCoord {
+            section: 0,
+            item: 0,
+        },
+    };
+
+    match prev_coords {
+        Some(prev) => panel.apply_coord(prev),
+        None => panel,
+    }
+}
 // ── Edge property panel builder ───────────────────────────────────────────────
 
 /// Build a [`PropPanel`] from the current edge [`ArrowDecorations`].
@@ -268,7 +319,7 @@ pub fn node_prop_panel(props: &NodeProperties, prev_coords: Option<PropPanelCoor
 /// arrowhead is currently active.
 pub fn edge_prop_panel(dir: ArrowDecorations, prev_coords: Option<PropPanelCoord>) -> PropPanel {
     let sections = vec![PropSection {
-        name: "Arrows",
+        name: Some("Arrows"),
         items: vec![
             PropItem {
                 icon: PathSymbol::ArrowLeft.to_symbol(),

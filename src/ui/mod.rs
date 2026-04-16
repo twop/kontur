@@ -853,6 +853,9 @@ pub fn render_app(
     if let Mode::SelectedEdge(_, EdgeMode::PropEditing { panel }) = mode {
         props::render_props_panel(frame, panel);
     }
+    if let Mode::CopyAsModal { panel, .. } = mode {
+        props::render_option_selection_modal(frame, panel, "copy as");
+    }
     status_bar::render_status_bar(frame, status_area, working_file, is_dirty);
     if let Mode::SaveModal { textarea, .. } = mode {
         save_modal::render_save_modal(frame, canvas_area, textarea, working_file, cwd);

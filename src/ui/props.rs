@@ -1,9 +1,9 @@
 use ratatui::{
+    Frame,
     layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Clear, Padding, Paragraph},
-    Frame,
 };
 
 use crate::{
@@ -121,11 +121,8 @@ fn item_text_width(item: &PropItem) -> usize {
 
 // ── Line builders ─────────────────────────────────────────────────────────────
 
-fn section_header_line(section: &PropSection, focused: bool) -> Line<'static> {
-    Line::from(vec![Span::styled(
-        section.name,
-        section_name_style(focused),
-    )])
+fn section_header_line(section: &'static str, focused: bool) -> Line<'static> {
+    Line::from(vec![Span::styled(section, section_name_style(focused))])
 }
 
 /// Returns `[border_top, content, border_bottom]` lines for a section's items row.
@@ -172,16 +169,14 @@ fn section_item_lines(
 
 // ── Panel entry point ─────────────────────────────────────────────────────────
 
-/// Render the property panel anchored to the **top-right** corner of the frame.
-pub fn render_props_panel(frame: &mut Frame, panel: &PropPanel) {
-    if panel.sections.is_empty() {
-        return;
-    }
-
-    let mut lines: Vec<Line> = Vec::with_capacity(panel.sections.len() * 4);
+/// Build the ratatui `Line` list for a panel (shared by both render functions).
+fn build_panel_lines(panel: &PropPanel) -> Vec<Line<'static>> {
+    let mut lines: Vec<Line> = Vec::with_capacity(panel.sections.len() * 3);
     for (sec_idx, section) in panel.sections.iter().enumerate() {
         let is_focused_section = sec_idx == panel.focused.section;
-        lines.push(section_header_line(section, is_focused_section));
+        if let Some(section_name) = section.name {
+            lines.push(section_header_line(section_name, is_focused_section));
+        }
 
         let [items_line, selection_underline_line] =
             section_item_lines(section, sec_idx, panel.focused);
@@ -189,9 +184,12 @@ pub fn render_props_panel(frame: &mut Frame, panel: &PropPanel) {
         lines.push(items_line);
         lines.push(selection_underline_line);
     }
+    lines
+}
 
-    // Compute content dimensions.
-    let content_width = lines
+/// Compute the visual width (in terminal columns) of the widest rendered line.
+fn panel_content_width(lines: &[Line<'_>]) -> u16 {
+    lines
         .iter()
         .map(|l| {
             l.spans
@@ -200,7 +198,17 @@ pub fn render_props_panel(frame: &mut Frame, panel: &PropPanel) {
                 .sum::<usize>()
         })
         .max()
-        .unwrap_or(10) as u16;
+        .unwrap_or(10) as u16
+}
+
+/// Render the property panel anchored to the **top-right** corner of the frame.
+pub fn render_props_panel(frame: &mut Frame, panel: &PropPanel) {
+    if panel.sections.is_empty() {
+        return;
+    }
+
+    let lines = build_panel_lines(panel);
+    let content_width = panel_content_width(&lines);
     let content_h = lines.len() as u16;
 
     let fa = frame.area();
@@ -219,6 +227,45 @@ pub fn render_props_panel(frame: &mut Frame, panel: &PropPanel) {
             right: 1,
             top: 1,
             bottom: 0, // on the bottom we already have a new line for reserved for selection
+        })
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(Color::DarkGray));
+
+    frame.render_widget(Clear, area);
+    frame.render_widget(Paragraph::new(lines).block(block), area);
+}
+
+/// Render a [`PropPanel`] as a **centred** overlay modal.
+///
+/// Used by `CopyAsModal`.  Shares all line-building and style logic with
+/// [`render_props_panel`]; the only structural difference is the anchor point
+/// (centre of the frame rather than top-right corner).
+pub fn render_option_selection_modal(frame: &mut Frame, panel: &PropPanel, title: &'static str) {
+    if panel.sections.is_empty() {
+        return;
+    }
+
+    let lines = build_panel_lines(panel);
+    let content_width = panel_content_width(&lines);
+    let content_h = lines.len() as u16;
+
+    let fa = frame.area();
+    let panel_w = (content_width + 4).min(fa.width);
+    let panel_h = (content_h + 3).min(fa.height);
+
+    // Centre in the frame.
+    let x = fa.width.saturating_sub(panel_w) / 2;
+    let y = fa.height.saturating_sub(panel_h) / 2;
+    let area = Rect::new(x, y, panel_w, panel_h);
+
+    let block = Block::default()
+        .title(format!(" {} ", title))
+        .padding(Padding {
+            left: 1,
+            right: 1,
+            top: 1,
+            bottom: 0,
         })
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)

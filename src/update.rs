@@ -11,11 +11,11 @@ use crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::layout::Size;
 use ratatui_textarea::{CursorMove, Input, Key, TextArea};
 
-use crate::actions::Action;
+use crate::actions::{Action, CopyFormat};
 use crate::geometry::{CanvasRect, Dir, SPoint};
 use crate::labels::LabelIter;
 use crate::path;
-use crate::prop_panel::{edge_prop_panel, node_prop_panel};
+use crate::prop_panel::{copy_as_panel, edge_prop_panel, node_prop_panel};
 
 use smallvec::SmallVec;
 
@@ -283,6 +283,33 @@ fn key_event_to_input(ev: crossterm::event::KeyEvent) -> Input {
     }
 }
 
+// ── Copy-as format wrapping ───────────────────────────────────────────────────
+
+/// Wrap `text` (plain unicode art) in the comment/block syntax appropriate for
+/// `fmt`.  `breadcrumb` is appended as the **last line inside** the wrapper so
+/// the diagram can be traced back to its source file.
+///
+/// Plain format returns `text` unchanged (no wrapper, no breadcrumb).
+fn wrap_for_format(text: &str, fmt: CopyFormat, breadcrumb: &str) -> String {
+    match fmt {
+        CopyFormat::Plain => text.to_string(),
+        CopyFormat::Markdown => {
+            format!("```\n{}\nkontur source: {}\n```\n", text, breadcrumb)
+        }
+        CopyFormat::Python => {
+            format!("\"\"\"\n{}\nkontur source: {}\n\"\"\"\n", text, breadcrumb)
+        }
+        CopyFormat::Rust => {
+            let commented = text
+                .lines()
+                .map(|l| format!("// {}", l))
+                .collect::<Vec<_>>()
+                .join("\n");
+            format!("{}\n// kontur source: {}\n", commented, breadcrumb)
+        }
+    }
+}
+
 // ── Edge side computation ─────────────────────────────────────────────────────
 
 /// Determine which sides of `src` and `dst` an edge should exit/enter from.
@@ -376,6 +403,57 @@ pub fn update(state: &mut AppState, action: Action, canvas_size: Size) -> Update
             }
         }
 
+        // ── Export: open "copy as" format picker (whole scene) ────────────────
+        Action::StartCopyAs => {
+            let panel = copy_as_panel(state.last_copy_as);
+            let prev = Box::new(state.mode.clone());
+            state.mode = Mode::CopyAsModal { panel, prev };
+        }
+
+        // ── Export: perform copy with chosen format ───────────────────────────
+        Action::CopyAs(fmt) => {
+            // Render the whole scene by passing all node IDs.
+            let all_ids: smallvec::SmallVec<[NodeId; 4]> =
+                state.nodes.iter().map(|n| n.id).collect();
+
+            let raw = crate::ui::text_export::render_selection_to_string(
+                &state.nodes,
+                &state.edges,
+                &all_ids,
+                &crate::ui::text_export::ExportOptions::default(),
+            );
+
+            if let Some(text) = raw {
+                // Build the breadcrumb: shorten the path to ~/... form when possible.
+                let breadcrumb = state
+                    .working_file
+                    .as_deref()
+                    .map(|p| {
+                        let p_str = p.to_string_lossy();
+                        // TODO remove HOME shenanigans from here
+                        std::env::var("HOME")
+                            .ok()
+                            .filter(|h| !h.is_empty())
+                            .map(|home| p_str.replacen(&home, "~", 1))
+                            .unwrap_or_else(|| p_str.into_owned())
+                    })
+                    .unwrap_or_else(|| "unsaved".to_string());
+
+                let wrapped = wrap_for_format(&text, fmt, &breadcrumb);
+
+                // Persist cursor + chosen format before closing.
+                if let Mode::CopyAsModal { ref panel, .. } = state.mode {
+                    state.last_copy_as = Some(panel.focused);
+                }
+                // Restore prev mode.
+                if let Mode::CopyAsModal { ref prev, .. } = state.mode {
+                    state.mode = *prev.clone();
+                }
+
+                return UpdateResult::Effect(Effect::CopyToClipboard(wrapped));
+            }
+        }
+
         // ── Application ───────────────────────────────────────────────────────
         Action::Quit => return UpdateResult::Quit,
 
@@ -405,7 +483,11 @@ pub fn update(state: &mut AppState, action: Action, canvas_size: Size) -> Update
         }
 
         Action::SaveModalConfirm => {
-            if let Mode::SaveModal { ref textarea, ref prev } = state.mode {
+            if let Mode::SaveModal {
+                ref textarea,
+                ref prev,
+            } = state.mode
+            {
                 let input = textarea.lines().first().map(|s| s.as_str()).unwrap_or("");
                 let path = resolve_save_path(input);
                 let prev_mode = *prev.clone();
@@ -736,7 +818,8 @@ pub fn update(state: &mut AppState, action: Action, canvas_size: Size) -> Update
         // ── Property panel navigation ─────────────────────────────────────────
         Action::PropNavUp => match state.mode {
             Mode::SelectedBlock(_, BlockMode::PropEditing { ref mut panel })
-            | Mode::SelectedEdge(_, EdgeMode::PropEditing { ref mut panel }) => {
+            | Mode::SelectedEdge(_, EdgeMode::PropEditing { ref mut panel })
+            | Mode::CopyAsModal { ref mut panel, .. } => {
                 panel.move_up();
             }
             _ => {}
@@ -744,7 +827,8 @@ pub fn update(state: &mut AppState, action: Action, canvas_size: Size) -> Update
 
         Action::PropNavDown => match state.mode {
             Mode::SelectedBlock(_, BlockMode::PropEditing { ref mut panel })
-            | Mode::SelectedEdge(_, EdgeMode::PropEditing { ref mut panel }) => {
+            | Mode::SelectedEdge(_, EdgeMode::PropEditing { ref mut panel })
+            | Mode::CopyAsModal { ref mut panel, .. } => {
                 panel.move_down();
             }
             _ => {}
@@ -752,7 +836,8 @@ pub fn update(state: &mut AppState, action: Action, canvas_size: Size) -> Update
 
         Action::PropNavLeft => match state.mode {
             Mode::SelectedBlock(_, BlockMode::PropEditing { ref mut panel })
-            | Mode::SelectedEdge(_, EdgeMode::PropEditing { ref mut panel }) => {
+            | Mode::SelectedEdge(_, EdgeMode::PropEditing { ref mut panel })
+            | Mode::CopyAsModal { ref mut panel, .. } => {
                 panel.move_left();
             }
             _ => {}
@@ -760,7 +845,8 @@ pub fn update(state: &mut AppState, action: Action, canvas_size: Size) -> Update
 
         Action::PropNavRight => match state.mode {
             Mode::SelectedBlock(_, BlockMode::PropEditing { ref mut panel })
-            | Mode::SelectedEdge(_, EdgeMode::PropEditing { ref mut panel }) => {
+            | Mode::SelectedEdge(_, EdgeMode::PropEditing { ref mut panel })
+            | Mode::CopyAsModal { ref mut panel, .. } => {
                 panel.move_right();
             }
             _ => {}
@@ -769,9 +855,8 @@ pub fn update(state: &mut AppState, action: Action, canvas_size: Size) -> Update
         Action::ApplyCurrentPropItem => {
             let action = match state.mode {
                 Mode::SelectedBlock(_, BlockMode::PropEditing { ref panel })
-                | Mode::SelectedEdge(_, EdgeMode::PropEditing { ref panel }) => {
-                    panel.current_action()
-                }
+                | Mode::SelectedEdge(_, EdgeMode::PropEditing { ref panel })
+                | Mode::CopyAsModal { ref panel, .. } => panel.current_action(),
                 _ => None,
             };
             if let Some(action) = action {
@@ -923,6 +1008,19 @@ pub fn update(state: &mut AppState, action: Action, canvas_size: Size) -> Update
                 // Esc from multi-selected: back to Normal.
                 Mode::MultiSelected { .. } => {
                     state.mode = Mode::Normal;
+                }
+                // Esc from copy-as modal: save cursor, restore prev mode.
+                Mode::CopyAsModal {
+                    ref panel,
+                    ref prev,
+                    ..
+                } => {
+                    // Preserve the cursor position even when cancelling so
+                    // re-opening the modal lands on the same item.
+                    state.last_copy_as = Some(panel.focused);
+
+                    let prev_mode = *prev.clone();
+                    state.mode = prev_mode;
                 }
                 _ => (),
             }

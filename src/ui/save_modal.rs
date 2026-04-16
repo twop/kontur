@@ -1,11 +1,11 @@
 use std::path::Path;
 
 use ratatui::{
-    Frame,
     layout::{Offset, Rect},
     style::{Color, Style},
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Clear, Paragraph},
+    Frame,
 };
 
 /// Render the save-file modal overlay centred on `canvas_area`.
