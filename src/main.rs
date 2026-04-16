@@ -79,7 +79,7 @@ fn format_key(code: KeyCode, mods: KeyModifiers) -> String {
 }
 
 // ── Demo graph ────────────────────────────────────────────────────────────────
-
+#[allow(dead_code)]
 fn bootstrap_demo_graph(app: &mut AppState) {
     let alpha = app.new_node_id();
     let beta = app.new_node_id();
