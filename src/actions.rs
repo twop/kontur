@@ -8,6 +8,7 @@ use std::path::PathBuf;
 
 use crossterm::event::KeyEvent;
 
+use crate::export_import_content::SupportedEmbeddingType;
 use crate::geometry::Dir;
 use crate::state::{EdgeEnd, EdgeId, EdgePropChange, NodeId, NodePropChange, Side};
 
@@ -18,12 +19,9 @@ use crate::state::{EdgeEnd, EdgeId, EdgePropChange, NodeId, NodePropChange, Side
 pub enum CopyFormat {
     /// Plain unicode art — no wrapper, no breadcrumb.
     Plain,
-    /// Wrapped in a fenced Markdown code block.
-    Markdown,
-    /// Wrapped in a Python triple-quoted string.
-    Python,
-    /// Every line prefixed with `// ` (Rust line comments).
-    Rust,
+
+    /// Either markdown code block or a comment in a supported programming language
+    Embedded(SupportedEmbeddingType),
 }
 
 #[derive(Clone, Debug)]

@@ -1,11 +1,13 @@
 pub mod actions;
 pub mod binding;
+pub mod export_import_content;
 pub mod geometry;
 pub mod labels;
 pub mod path;
 pub mod prop_panel;
 pub mod scene_save;
 pub mod screen_space;
+pub mod startup_file_selection;
 pub mod state;
 pub mod ui;
 pub mod update;
@@ -15,6 +17,7 @@ use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::time::Instant;
 
+use clap::Parser;
 use crossterm::event::{KeyCode, KeyModifiers};
 use geometry::{SPoint, SRect};
 use ratatui::layout::Size;
@@ -23,6 +26,18 @@ use update::{UpdateResult, update};
 use viewport::Viewport;
 
 use crate::binding::{Binding, KeyBinding, bindings_for_mode};
+
+// ──  Clap CLI args ────────────────────────────────────────────────────────────────
+//
+
+#[derive(Debug, Parser)]
+#[command(version, about, long_about = None)]
+struct AppArgs {
+    /// File path or folder to open.
+    /// If not provided then a new scratch diagram is created instead
+    #[arg(value_name = "PATH")]
+    path: Option<PathBuf>,
+}
 
 // ── Save state ────────────────────────────────────────────────────────────────
 
@@ -160,6 +175,8 @@ fn bootstrap_small_demo_graph(app: &mut AppState) {
 
 fn main() -> color_eyre::Result<()> {
     color_eyre::install()?;
+
+    let args = AppArgs::parse();
 
     crossterm::terminal::enable_raw_mode()?;
     let mut stdout = std::io::stdout();
@@ -309,15 +326,14 @@ fn main() -> color_eyre::Result<()> {
                                     }
                                 }
                                 update::Effect::LoadScene => {
-                                    if let Ok(json) = std::fs::read_to_string("scene.kontur") {
+                                    if let Ok(json) = std::fs::read_to_string("scene.ktr") {
                                         if let Ok(snapshot) =
                                             serde_json::from_str::<scene_save::SceneSave>(&json)
                                         {
                                             let (vp, nodes, edges) =
                                                 scene_save::from_scene_save(snapshot);
                                             app = AppState::from_parts(nodes, edges, vp);
-                                            app.working_file =
-                                                Some(PathBuf::from("scene.kontur"));
+                                            app.working_file = Some(PathBuf::from("scene.ktr"));
                                             save_state.mark_saved();
                                         }
                                     }

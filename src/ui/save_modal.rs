@@ -1,21 +1,22 @@
 use std::path::Path;
 
 use ratatui::{
+    Frame,
     layout::{Offset, Rect},
     style::{Color, Style},
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Clear, Paragraph},
-    Frame,
 };
+
+use crate::export_import_content::resolve_save_path;
 
 /// Render the save-file modal overlay centred on `canvas_area`.
 ///
-/// Layout (inside the rounded border):
-/// ```text
+/// Sketch:
+/// ```
 /// ┌─ save ────────────────────────────────────────────┐
 /// │  [textarea input                       ] .ktr     │
 /// │  path: /resolved/full/path/filename.ktr           │
-/// │                                                   │
 /// └───────────────────────────────────────────────────┘
 /// ```
 ///
@@ -78,7 +79,7 @@ pub(crate) fn render_save_modal(
     // ── Row 2: resolved path preview ─────────────────────────────────────────
     let path_row = Rect::new(inner.x, inner.y + 1, inner.width, 1);
     let input_text = textarea.lines().first().map(|s| s.as_str()).unwrap_or("");
-    let resolved = crate::update::resolve_save_path(input_text);
+    let resolved = resolve_save_path(input_text);
     let resolved_str = resolved.to_string_lossy();
 
     let path_line = if !input_text.is_empty() {

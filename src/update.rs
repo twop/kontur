@@ -12,6 +12,7 @@ use ratatui::layout::Size;
 use ratatui_textarea::{CursorMove, Input, Key, TextArea};
 
 use crate::actions::{Action, CopyFormat};
+use crate::export_import_content::{format_embedded_diagram, resolve_save_path};
 use crate::geometry::{CanvasRect, Dir, SPoint};
 use crate::labels::LabelIter;
 use crate::path;
@@ -177,30 +178,6 @@ pub enum Effect {
     CopyToClipboard(String),
 }
 
-// ── Path resolution ───────────────────────────────────────────────────────────
-
-/// Resolve a raw filename string typed by the user into a concrete `PathBuf`.
-///
-/// Rules:
-/// - Leading/trailing whitespace is stripped.
-/// - A trailing `.ktr` extension is stripped before re-appending, so the user
-///   can type either `foo` or `foo.ktr` without getting `foo.ktr.ktr`.
-/// - Relative paths are resolved against the process current working directory.
-/// - Absolute paths are used as-is.
-pub(crate) fn resolve_save_path(input: &str) -> PathBuf {
-    let trimmed = input.trim();
-    let stem = trimmed.strip_suffix(".ktr").unwrap_or(trimmed);
-    let filename = format!("{}.ktr", stem);
-    let p = PathBuf::from(&filename);
-    if p.is_absolute() {
-        p
-    } else {
-        std::env::current_dir()
-            .unwrap_or_else(|_| PathBuf::from("."))
-            .join(p)
-    }
-}
-
 #[derive(Debug, Clone)]
 pub enum UpdateResult {
     Continue,
@@ -280,33 +257,6 @@ fn key_event_to_input(ev: crossterm::event::KeyEvent) -> Input {
         ctrl,
         alt,
         shift,
-    }
-}
-
-// ── Copy-as format wrapping ───────────────────────────────────────────────────
-
-/// Wrap `text` (plain unicode art) in the comment/block syntax appropriate for
-/// `fmt`.  `breadcrumb` is appended as the **last line inside** the wrapper so
-/// the diagram can be traced back to its source file.
-///
-/// Plain format returns `text` unchanged (no wrapper, no breadcrumb).
-fn wrap_for_format(text: &str, fmt: CopyFormat, breadcrumb: &str) -> String {
-    match fmt {
-        CopyFormat::Plain => text.to_string(),
-        CopyFormat::Markdown => {
-            format!("```\n{}\nkontur source: {}\n```\n", text, breadcrumb)
-        }
-        CopyFormat::Python => {
-            format!("\"\"\"\n{}\nkontur source: {}\n\"\"\"\n", text, breadcrumb)
-        }
-        CopyFormat::Rust => {
-            let commented = text
-                .lines()
-                .map(|l| format!("// {}", l))
-                .collect::<Vec<_>>()
-                .join("\n");
-            format!("{}\n// kontur source: {}\n", commented, breadcrumb)
-        }
     }
 }
 
@@ -439,7 +389,17 @@ pub fn update(state: &mut AppState, action: Action, canvas_size: Size) -> Update
                     })
                     .unwrap_or_else(|| "unsaved".to_string());
 
-                let wrapped = wrap_for_format(&text, fmt, &breadcrumb);
+                // TODO figure out what to put in
+                let path_buf = &PathBuf::new();
+
+                let fmt = match fmt {
+                    CopyFormat::Plain => None,
+                    CopyFormat::Embedded(supported_embedding_type) => {
+                        Some(supported_embedding_type)
+                    }
+                };
+
+                let wrapped = format_embedded_diagram(&text, fmt, Some(path_buf), 0, None);
 
                 // Persist cursor + chosen format before closing.
                 if let Mode::CopyAsModal { ref panel, .. } = state.mode {

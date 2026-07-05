@@ -9,6 +9,7 @@
 // (edges, etc.) add their own builder functions without touching this file.
 
 use crate::actions::{Action, CopyFormat};
+use crate::export_import_content::SupportedEmbeddingType;
 use crate::path::PathSymbol;
 use crate::state::{
     ArrowDecorations, CornerStyle, EdgePropChange, NodeLayoutMode, NodePropChange, NodeProperties,
@@ -280,19 +281,19 @@ pub fn copy_as_panel(prev_coords: Option<PropPanelCoord>) -> PropPanel {
                 icon: "",
                 label: "markdown",
                 selected: false,
-                action: Action::CopyAs(CopyFormat::Markdown),
+                action: Action::CopyAs(CopyFormat::Embedded(SupportedEmbeddingType::Markdown)),
             },
             PropItem {
                 icon: "",
                 label: "python",
                 selected: false,
-                action: Action::CopyAs(CopyFormat::Python),
+                action: Action::CopyAs(CopyFormat::Embedded(SupportedEmbeddingType::Python)),
             },
             PropItem {
                 icon: "", //
                 label: "rust",
                 selected: false,
-                action: Action::CopyAs(CopyFormat::Rust),
+                action: Action::CopyAs(CopyFormat::Embedded(SupportedEmbeddingType::Rust)),
             },
         ],
     }];
