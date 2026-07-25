@@ -7,7 +7,7 @@ pub mod path;
 pub mod prop_panel;
 pub mod scene_save;
 pub mod screen_space;
-pub mod startup_file_selection;
+pub mod startup_selection;
 pub mod state;
 pub mod ui;
 pub mod update;
@@ -405,5 +405,6 @@ fn mode_name(mode: &Mode) -> &'static str {
         Mode::MultiSelecting { .. } => "multi-select",
         Mode::MultiSelected { .. } => "multi-selected",
         Mode::CopyAsModal { .. } => "copy as",
+        Mode::FileSelection(_) => "file selection",
     }
 }

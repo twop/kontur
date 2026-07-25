@@ -7,6 +7,7 @@ use smallvec::SmallVec;
 
 use crate::actions::CopyFormat;
 use crate::geometry::{Padding, SPoint, SRect};
+use crate::startup_selection::select_diagram_file::FileSelectionState;
 pub use crate::viewport::{AnimationConfig, Viewport};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -301,6 +302,9 @@ pub enum BlockMode {
 
 #[derive(Clone)]
 pub enum Mode {
+    /// Initial state to choose file to edit from a folder
+    FileSelection(FileSelectionState),
+
     Normal,
     /// Single-line filename input for saving the scene.
     ///

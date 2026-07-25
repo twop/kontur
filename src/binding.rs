@@ -494,6 +494,8 @@ pub fn bindings_for_mode(mode: &Mode) -> Vec<Binding> {
             // Space menu for MultiSelected: shared items + yank (y).
             Binding::menu(KeyCode::Char(' '), "menu", multi_selected_menu_items()),
         ],
+
+        Mode::FileSelection(_) => vec![],
     };
 
     bindings

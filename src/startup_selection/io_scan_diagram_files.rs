@@ -8,6 +8,7 @@ pub enum FileScanError {
     IO(io::Error),
 }
 
+#[derive(Clone)]
 pub struct Backlink {
     pub source_path: PathBuf,
     pub file_path: PathBuf,
@@ -15,13 +16,14 @@ pub struct Backlink {
     pub buf_position: Range<usize>,
 }
 
-pub enum ScanItem {
+#[derive(Clone)]
+pub enum DiagramScanItem {
     NativeSource(PathBuf),
     Backlink(Backlink),
 }
 
-pub fn scan_path_for_kontur_files(path: PathBuf) -> Result<Vec<ScanItem>, FileScanError> {
-    let mut items: Vec<ScanItem> = Vec::new();
+pub fn io_scan_path_for_kontur_files(path: PathBuf) -> Result<Vec<DiagramScanItem>, FileScanError> {
+    let mut items: Vec<DiagramScanItem> = Vec::new();
     if path.is_dir() {
         for dir_entry in fs::read_dir(path)? {
             let dir_entry = dir_entry?;
@@ -34,28 +36,24 @@ pub fn scan_path_for_kontur_files(path: PathBuf) -> Result<Vec<ScanItem>, FileSc
             {
                 match file_type {
                     SupportedFileType::Native => {
-                        items.push(ScanItem::NativeSource(entry_path));
+                        items.push(DiagramScanItem::NativeSource(entry_path));
                     }
                     SupportedFileType::Embedded(embedded) => {
                         let file_str = fs::read_to_string(entry_path.clone())?;
-                        items.extend(
-                            scan_for_embeddings(&file_str, embedded)
-                                .into_iter()
-                                .map(
-                                    |DiagramEmbedding {
-                                         source,
-                                         buf_position,
-                                         ..
-                                     }| {
-                                        ScanItem::Backlink(Backlink {
-                                            source_path: source,
-                                            file_path: entry_path.clone(),
-                                            embedding_type: embedded,
-                                            buf_position,
-                                        })
-                                    },
-                                ),
-                        );
+                        items.extend(scan_for_embeddings(&file_str, embedded).into_iter().map(
+                            |DiagramEmbedding {
+                                 source,
+                                 buf_position,
+                                 ..
+                             }| {
+                                DiagramScanItem::Backlink(Backlink {
+                                    source_path: source,
+                                    file_path: entry_path.clone(),
+                                    embedding_type: embedded,
+                                    buf_position,
+                                })
+                            },
+                        ));
                     }
                 }
             }
