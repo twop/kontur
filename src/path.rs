@@ -858,7 +858,6 @@ pub fn classify_shape_ordered(ep: &OrderedEndpoints) -> ConnectorShape {
     let end = rect_connection_point(end_rect, end_side);
     let start_dir = side_to_dir(start_side);
 
-    use Side::*;
     match ep.relation {
         // ── Coincident ────────────────────────────────────────────────────
         PointRelation::Coincident => ConnectorShape::Line {
